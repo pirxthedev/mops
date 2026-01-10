@@ -1,0 +1,42 @@
+[workspace]
+resolver = "2"
+members = [
+    "mops-core",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["MOPS Contributors"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/mops-fea/mops"
+description = "Modular Open Physics Solver - High-performance FEA"
+
+[workspace.dependencies]
+# Linear algebra
+nalgebra = "0.33"
+nalgebra-sparse = "0.10"
+
+# Sparse matrices
+sprs = "0.11"
+
+# Parallelism
+rayon = "1.10"
+
+# HDF5 for results files (requires system HDF5)
+hdf5 = "0.8"
+
+# Python bindings (optional, for mops-python)
+pyo3 = { version = "0.23", features = ["extension-module"] }
+
+# Error handling
+thiserror = "2.0"
+anyhow = "1.0"
+
+# Testing
+approx = "0.5"
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = 3

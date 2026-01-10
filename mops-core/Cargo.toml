@@ -1,0 +1,35 @@
+[package]
+name = "mops-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "MOPS solver core - element library, assembly, and linear algebra"
+
+[dependencies]
+# Linear algebra
+nalgebra = { workspace = true }
+nalgebra-sparse = { workspace = true }
+
+# Sparse matrices
+sprs = { workspace = true }
+
+# Parallelism
+rayon = { workspace = true }
+
+# HDF5 for results files (optional)
+hdf5 = { workspace = true, optional = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+[dev-dependencies]
+approx = { workspace = true }
+
+[features]
+default = []
+# Enable HDF5 for results file I/O
+hdf5-io = ["dep:hdf5"]
+# Enable for Python bindings (used by mops-python)
+python = []
