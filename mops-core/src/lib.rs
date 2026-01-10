@@ -25,7 +25,7 @@ pub mod solver;
 pub mod error;
 
 pub use types::{Point3, StressTensor, StrainTensor};
-pub use element::Element;
+pub use element::{Element, create_element};
 pub use mesh::Mesh;
 pub use material::Material;
 pub use sparse::CsrMatrix;
