@@ -7,6 +7,7 @@
 //!
 //! - [`gauss`] - Gauss quadrature rules for numerical integration
 //! - [`tet4`] - 4-node tetrahedron (constant strain)
+//! - [`tet10`] - 10-node tetrahedron (quadratic)
 //! - [`hex8`] - 8-node hexahedron (trilinear brick)
 //!
 //! # Element Dispatch
@@ -21,6 +22,9 @@
 //! let element = create_element(ElementType::Tet4);
 //! assert_eq!(element.n_nodes(), 4);
 //!
+//! let tet10 = create_element(ElementType::Tet10);
+//! assert_eq!(tet10.n_nodes(), 10);
+//!
 //! let hex = create_element(ElementType::Hex8);
 //! assert_eq!(hex.n_nodes(), 8);
 //! ```
@@ -32,10 +36,10 @@ use nalgebra::DMatrix;
 
 pub mod gauss;
 pub mod hex8;
+pub mod tet10;
 pub mod tet4;
 
 // Element implementations (to be added)
-// pub mod tet10;
 // pub mod hex20;
 // pub mod plane_stress;
 // pub mod plane_strain;
@@ -43,6 +47,7 @@ pub mod tet4;
 
 pub use gauss::{gauss_1d, gauss_hex, gauss_quad, gauss_tet, gauss_tri, GaussPoint};
 pub use hex8::Hex8;
+pub use tet10::Tet10;
 pub use tet4::Tet4;
 
 /// Finite element interface.
@@ -125,13 +130,13 @@ pub trait Element: Send + Sync {
 pub fn create_element(element_type: ElementType) -> Box<dyn Element> {
     match element_type {
         ElementType::Tet4 => Box::new(Tet4::new()),
+        ElementType::Tet10 => Box::new(Tet10::new()),
         ElementType::Hex8 => Box::new(Hex8::new()),
         // Future implementations:
-        // ElementType::Tet10 => Box::new(Tet10::new()),
         // ElementType::Hex20 => Box::new(Hex20::new()),
         _ => unimplemented!(
             "Element type {:?} is not yet implemented. \
-             Currently supported: Tet4, Hex8",
+             Currently supported: Tet4, Tet10, Hex8",
             element_type
         ),
     }
@@ -150,17 +155,19 @@ mod tests {
     }
 
     #[test]
+    fn test_create_element_tet10() {
+        let element = create_element(ElementType::Tet10);
+        assert_eq!(element.n_nodes(), 10);
+        assert_eq!(element.dofs_per_node(), 3);
+        assert_eq!(element.n_dofs(), 30);
+    }
+
+    #[test]
     fn test_create_element_hex8() {
         let element = create_element(ElementType::Hex8);
         assert_eq!(element.n_nodes(), 8);
         assert_eq!(element.dofs_per_node(), 3);
         assert_eq!(element.n_dofs(), 24);
-    }
-
-    #[test]
-    #[should_panic(expected = "not yet implemented")]
-    fn test_create_element_unimplemented_tet10() {
-        let _ = create_element(ElementType::Tet10);
     }
 
     #[test]
