@@ -7,6 +7,7 @@
 //!
 //! - [`gauss`] - Gauss quadrature rules for numerical integration
 //! - [`tet4`] - 4-node tetrahedron (constant strain)
+//! - [`hex8`] - 8-node hexahedron (trilinear brick)
 //!
 //! # Element Dispatch
 //!
@@ -19,6 +20,9 @@
 //!
 //! let element = create_element(ElementType::Tet4);
 //! assert_eq!(element.n_nodes(), 4);
+//!
+//! let hex = create_element(ElementType::Hex8);
+//! assert_eq!(hex.n_nodes(), 8);
 //! ```
 
 use crate::material::Material;
@@ -27,17 +31,18 @@ use crate::types::{Point3, StressTensor};
 use nalgebra::DMatrix;
 
 pub mod gauss;
+pub mod hex8;
 pub mod tet4;
 
 // Element implementations (to be added)
 // pub mod tet10;
-// pub mod hex8;
 // pub mod hex20;
 // pub mod plane_stress;
 // pub mod plane_strain;
 // pub mod axisymmetric;
 
 pub use gauss::{gauss_1d, gauss_hex, gauss_quad, gauss_tet, gauss_tri, GaussPoint};
+pub use hex8::Hex8;
 pub use tet4::Tet4;
 
 /// Finite element interface.
@@ -120,13 +125,13 @@ pub trait Element: Send + Sync {
 pub fn create_element(element_type: ElementType) -> Box<dyn Element> {
     match element_type {
         ElementType::Tet4 => Box::new(Tet4::new()),
+        ElementType::Hex8 => Box::new(Hex8::new()),
         // Future implementations:
         // ElementType::Tet10 => Box::new(Tet10::new()),
-        // ElementType::Hex8 => Box::new(Hex8::new()),
         // ElementType::Hex20 => Box::new(Hex20::new()),
         _ => unimplemented!(
             "Element type {:?} is not yet implemented. \
-             Currently supported: Tet4",
+             Currently supported: Tet4, Hex8",
             element_type
         ),
     }
@@ -145,6 +150,14 @@ mod tests {
     }
 
     #[test]
+    fn test_create_element_hex8() {
+        let element = create_element(ElementType::Hex8);
+        assert_eq!(element.n_nodes(), 8);
+        assert_eq!(element.dofs_per_node(), 3);
+        assert_eq!(element.n_dofs(), 24);
+    }
+
+    #[test]
     #[should_panic(expected = "not yet implemented")]
     fn test_create_element_unimplemented_tet10() {
         let _ = create_element(ElementType::Tet10);
@@ -152,7 +165,7 @@ mod tests {
 
     #[test]
     #[should_panic(expected = "not yet implemented")]
-    fn test_create_element_unimplemented_hex8() {
-        let _ = create_element(ElementType::Hex8);
+    fn test_create_element_unimplemented_hex20() {
+        let _ = create_element(ElementType::Hex20);
     }
 }
