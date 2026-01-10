@@ -85,5 +85,4 @@ bd sync               # Sync with git
 
 - **Broken codebase:** Consider `git reset` vs. rescue prompts
 - **Context overflow:** Use subagents to create plans externally
-- **Off track:** Delete fix_plan.md and regenerate via planning loop
 
