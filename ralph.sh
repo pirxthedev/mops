@@ -1,4 +1,11 @@
 #!/bin/bash
-while :; do
-    cat PROMPT.md | claude --dangerously-skip-permissions -p --model opus --verbose
+while true; do
+    cat PROMPT.md | claude -p \
+        --dangerously-skip-permissions \
+        --output-format=stream-json \
+        --model opus \
+        --verbose \
+        | bunx repomirror visualize
+    git push origin main
+    echo -e "\n\n========================LOOP=========================\n\n"
 done
