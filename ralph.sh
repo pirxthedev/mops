@@ -1,2 +1,2 @@
 #!/bin/bash
-while :; do cat PROMPT.md | claude --dangerously-skip-permissions -p; done
+while :; do cat "$1" | claude --dangerously-skip-permissions -p; done
