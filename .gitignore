@@ -1,0 +1,29 @@
+# Rust
+/target/
+Cargo.lock
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python (for mops-python)
+__pycache__/
+*.py[cod]
+*$py.class
+.eggs/
+*.egg-info/
+.venv/
+venv/
+dist/
+build/
+*.so
+
+# Test artifacts
+*.log
+*.tmp
