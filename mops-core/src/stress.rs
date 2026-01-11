@@ -121,7 +121,8 @@ impl StressField {
 /// println!("Max von Mises stress: {:.2} Pa", stresses.max_von_mises());
 /// ```
 pub fn recover_stresses(mesh: &Mesh, material: &Material, displacements: &[f64]) -> StressField {
-    let dofs_per_node = 3;
+    // Get DOFs per node from mesh (2 for 2D elements, 3 for 3D elements)
+    let dofs_per_node = mesh.dofs_per_node().unwrap_or(3);
 
     // Parallel stress recovery over elements
     let element_stresses: Vec<ElementStress> = mesh
@@ -132,18 +133,21 @@ pub fn recover_stresses(mesh: &Mesh, material: &Material, displacements: &[f64])
             // Create element implementation
             let element = create_element(connectivity.element_type);
 
+            // Get DOFs per node for this specific element type
+            let elem_dofs_per_node = connectivity.element_type.dofs_per_node();
+
             // Get element nodal coordinates
             let coords = mesh.element_coords(elem_idx).expect("Valid element index");
 
             // Extract element nodal displacements
             let n_nodes = connectivity.nodes.len();
-            let n_dofs = n_nodes * dofs_per_node;
+            let n_dofs = n_nodes * elem_dofs_per_node;
             let mut elem_displacements = vec![0.0; n_dofs];
 
             for (local_node, &global_node) in connectivity.nodes.iter().enumerate() {
-                for dof in 0..dofs_per_node {
+                for dof in 0..elem_dofs_per_node {
                     let global_dof = global_node * dofs_per_node + dof;
-                    let local_dof = local_node * dofs_per_node + dof;
+                    let local_dof = local_node * elem_dofs_per_node + dof;
                     elem_displacements[local_dof] =
                         displacements.get(global_dof).copied().unwrap_or(0.0);
                 }
