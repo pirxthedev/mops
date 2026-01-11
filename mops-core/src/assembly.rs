@@ -79,12 +79,15 @@ pub fn assemble(
     boundary_conditions: &[BoundaryCondition],
     _options: &AssemblyOptions,
 ) -> Result<AssembledSystem> {
-    // For now, assume 3 DOFs per node (3D solid elements)
-    let dofs_per_node = 3;
+    // Determine DOFs per node from mesh element types
+    let dofs_per_node = mesh.dofs_per_node()?;
     let n_dofs = mesh.n_nodes() * dofs_per_node;
 
-    // Estimate non-zeros: ~27 per DOF for 3D solid elements (stencil size)
-    let nnz_estimate = n_dofs * 27;
+    // Estimate non-zeros based on element dimension
+    // 3D: ~27 per DOF (3x3x3 stencil)
+    // 2D: ~9 per DOF (3x3 stencil)
+    let nnz_per_dof = if dofs_per_node == 3 { 27 } else { 9 };
+    let nnz_estimate = n_dofs * nnz_per_dof;
     let triplet = Mutex::new(TripletMatrix::with_capacity(n_dofs, n_dofs, nnz_estimate));
 
     // Parallel element stiffness computation and assembly
@@ -102,10 +105,12 @@ pub fn assemble(
             let ke = element.stiffness(&coords, material);
 
             // Build DOF index mapping: element nodes -> global DOFs
+            // Use the element's dofs_per_node to ensure correct mapping
+            let elem_dofs_per_node = element.dofs_per_node();
             let dof_indices: Vec<usize> = connectivity
                 .nodes
                 .iter()
-                .flat_map(|&node| (0..dofs_per_node).map(move |d| node * dofs_per_node + d))
+                .flat_map(|&node| (0..elem_dofs_per_node).map(move |d| node * dofs_per_node + d))
                 .collect();
 
             // Add to global triplet matrix (thread-safe via mutex)
@@ -336,5 +341,195 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn test_single_tri3_assembly() {
+        // Create a single triangle mesh (2D plane stress)
+        let mut mesh = Mesh::new();
+
+        // Unit right triangle in XY plane
+        mesh.add_node(Vector3::new(0.0, 0.0, 0.0));
+        mesh.add_node(Vector3::new(1.0, 0.0, 0.0));
+        mesh.add_node(Vector3::new(0.0, 1.0, 0.0));
+
+        mesh.add_element(ElementType::Tri3, vec![0, 1, 2]).unwrap();
+
+        let material = Material::steel();
+        let bcs: Vec<BoundaryCondition> = vec![];
+        let options = AssemblyOptions::default();
+
+        let result = assemble(&mesh, &material, &bcs, &options).unwrap();
+
+        // 3 nodes * 2 DOFs = 6 DOFs
+        assert_eq!(result.n_dofs, 6);
+
+        // Stiffness matrix should have non-zeros
+        assert!(result.stiffness.nnz() > 0);
+
+        // Check symmetry
+        let dense = nalgebra::DMatrix::from(&result.stiffness);
+        for i in 0..6 {
+            for j in 0..6 {
+                assert!(
+                    (dense[(i, j)] - dense[(j, i)]).abs() < 1e-6,
+                    "Stiffness not symmetric at ({}, {})",
+                    i,
+                    j
+                );
+            }
+        }
+
+        // Diagonal entries should be positive
+        for i in 0..6 {
+            assert!(dense[(i, i)] > 0.0, "Diagonal {} is not positive", i);
+        }
+    }
+
+    #[test]
+    fn test_single_quad4_assembly() {
+        // Create a single quad mesh (2D plane stress)
+        let mut mesh = Mesh::new();
+
+        // Unit square in XY plane
+        mesh.add_node(Vector3::new(0.0, 0.0, 0.0));
+        mesh.add_node(Vector3::new(1.0, 0.0, 0.0));
+        mesh.add_node(Vector3::new(1.0, 1.0, 0.0));
+        mesh.add_node(Vector3::new(0.0, 1.0, 0.0));
+
+        mesh.add_element(ElementType::Quad4, vec![0, 1, 2, 3])
+            .unwrap();
+
+        let material = Material::steel();
+        let bcs: Vec<BoundaryCondition> = vec![];
+        let options = AssemblyOptions::default();
+
+        let result = assemble(&mesh, &material, &bcs, &options).unwrap();
+
+        // 4 nodes * 2 DOFs = 8 DOFs
+        assert_eq!(result.n_dofs, 8);
+
+        // Stiffness matrix should have non-zeros
+        assert!(result.stiffness.nnz() > 0);
+
+        // Check symmetry
+        let dense = nalgebra::DMatrix::from(&result.stiffness);
+        for i in 0..8 {
+            for j in 0..8 {
+                assert!(
+                    (dense[(i, j)] - dense[(j, i)]).abs() < 1e-6,
+                    "Stiffness not symmetric at ({}, {})",
+                    i,
+                    j
+                );
+            }
+        }
+
+        // Diagonal entries should be positive
+        for i in 0..8 {
+            assert!(dense[(i, i)] > 0.0, "Diagonal {} is not positive", i);
+        }
+    }
+
+    #[test]
+    fn test_2d_boundary_conditions() {
+        // Create a triangle mesh and apply 2D BCs
+        let mut mesh = Mesh::new();
+
+        mesh.add_node(Vector3::new(0.0, 0.0, 0.0)); // Node 0
+        mesh.add_node(Vector3::new(1.0, 0.0, 0.0)); // Node 1
+        mesh.add_node(Vector3::new(0.5, 1.0, 0.0)); // Node 2
+
+        mesh.add_element(ElementType::Tri3, vec![0, 1, 2]).unwrap();
+
+        let material = Material::steel();
+        let bcs = vec![
+            // Fix node 0 in both directions
+            BoundaryCondition::Displacement {
+                node: 0,
+                dof: 0,
+                value: 0.0,
+            },
+            BoundaryCondition::Displacement {
+                node: 0,
+                dof: 1,
+                value: 0.0,
+            },
+            // Apply force at node 2 in y-direction
+            BoundaryCondition::Force {
+                node: 2,
+                dof: 1,
+                value: 1000.0,
+            },
+        ];
+        let options = AssemblyOptions::default();
+
+        let result = assemble(&mesh, &material, &bcs, &options).unwrap();
+
+        // 3 nodes * 2 DOFs = 6 DOFs
+        assert_eq!(result.n_dofs, 6);
+
+        // Check constraints were recorded correctly
+        // Node 0, dof 0 = global DOF 0
+        // Node 0, dof 1 = global DOF 1
+        assert!(result.constraints.contains_key(&0));
+        assert!(result.constraints.contains_key(&1));
+
+        // Check force was applied at node 2, dof 1 = global DOF 5
+        assert!((result.rhs[5] - 1000.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_multi_tri3_assembly() {
+        // Create a mesh with two triangles sharing an edge
+        let mut mesh = Mesh::new();
+
+        // 4 nodes forming a square split into two triangles
+        mesh.add_node(Vector3::new(0.0, 0.0, 0.0)); // 0
+        mesh.add_node(Vector3::new(1.0, 0.0, 0.0)); // 1
+        mesh.add_node(Vector3::new(1.0, 1.0, 0.0)); // 2
+        mesh.add_node(Vector3::new(0.0, 1.0, 0.0)); // 3
+
+        // Lower-right triangle
+        mesh.add_element(ElementType::Tri3, vec![0, 1, 2]).unwrap();
+        // Upper-left triangle
+        mesh.add_element(ElementType::Tri3, vec![0, 2, 3]).unwrap();
+
+        let material = Material::steel();
+        let bcs: Vec<BoundaryCondition> = vec![];
+        let options = AssemblyOptions::default();
+
+        let result = assemble(&mesh, &material, &bcs, &options).unwrap();
+
+        // 4 nodes * 2 DOFs = 8 DOFs
+        assert_eq!(result.n_dofs, 8);
+
+        // Check symmetry
+        let dense = nalgebra::DMatrix::from(&result.stiffness);
+        for i in 0..8 {
+            for j in 0..8 {
+                assert!(
+                    (dense[(i, j)] - dense[(j, i)]).abs() < 1e-6,
+                    "Stiffness not symmetric at ({}, {})",
+                    i,
+                    j
+                );
+            }
+        }
+
+        // All diagonal entries should be positive
+        for i in 0..8 {
+            assert!(dense[(i, i)] > 0.0, "Diagonal {} is not positive", i);
+        }
+
+        // There should be coupling between nodes of each element
+        // Element 1 (nodes 0,1,2): DOFs 0-5
+        // Element 2 (nodes 0,2,3): DOFs 0-1, 4-7
+        // Coupling should exist between nodes within each element
+        // Node 0 (DOFs 0,1) and Node 1 (DOFs 2,3) from element 1
+        assert!(
+            dense[(0, 2)].abs() > 1e-10 || dense[(0, 3)].abs() > 1e-10,
+            "Nodes 0 and 1 should have coupling"
+        );
     }
 }

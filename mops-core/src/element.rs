@@ -115,13 +115,17 @@ pub trait Element: Send + Sync {
 /// [`ElementType`]. This enables the assembly loop to work uniformly with
 /// any element type.
 ///
+/// For 2D elements that require a thickness parameter, use
+/// [`create_element_with_thickness`] instead.
+///
 /// # Arguments
 ///
 /// * `element_type` - The element type to instantiate
 ///
 /// # Panics
 ///
-/// Panics if the element type is not yet implemented.
+/// Panics if the element type is not yet implemented or requires additional
+/// parameters (like thickness for 2D elements).
 ///
 /// # Example
 ///
@@ -139,9 +143,51 @@ pub fn create_element(element_type: ElementType) -> Box<dyn Element> {
         ElementType::Tet10 => Box::new(Tet10::new()),
         ElementType::Hex8 => Box::new(Hex8::new()),
         ElementType::Hex20 => Box::new(Hex20::new()),
+        ElementType::Tri3 | ElementType::Quad4 => {
+            // Use default thickness of 1.0 for plane stress elements
+            create_element_with_thickness(element_type, 1.0)
+        }
         _ => unimplemented!(
             "Element type {:?} is not yet implemented. \
-             Currently supported: Tet4, Tet10, Hex8, Hex20",
+             Currently supported: Tet4, Tet10, Hex8, Hex20, Tri3, Quad4",
+            element_type
+        ),
+    }
+}
+
+/// Create a 2D element with specified thickness.
+///
+/// For 2D plane stress elements (Tri3, Quad4), the thickness parameter
+/// affects the stiffness matrix: K = t * ∫∫ B^T * D * B dA
+///
+/// # Arguments
+///
+/// * `element_type` - The 2D element type to instantiate
+/// * `thickness` - Element thickness (must be positive)
+///
+/// # Panics
+///
+/// Panics if:
+/// - The element type is not a 2D plane stress element
+/// - The thickness is not positive
+///
+/// # Example
+///
+/// ```
+/// use mops_core::element::create_element_with_thickness;
+/// use mops_core::mesh::ElementType;
+///
+/// let element = create_element_with_thickness(ElementType::Tri3, 0.1);
+/// assert_eq!(element.n_nodes(), 3);
+/// assert_eq!(element.dofs_per_node(), 2);
+/// ```
+pub fn create_element_with_thickness(element_type: ElementType, thickness: f64) -> Box<dyn Element> {
+    match element_type {
+        ElementType::Tri3 => Box::new(Tri3::new(thickness)),
+        ElementType::Quad4 => Box::new(Quad4::new(thickness)),
+        _ => panic!(
+            "Element type {:?} does not support thickness parameter. \
+             Use create_element() for 3D elements.",
             element_type
         ),
     }
@@ -181,5 +227,37 @@ mod tests {
         assert_eq!(element.n_nodes(), 20);
         assert_eq!(element.dofs_per_node(), 3);
         assert_eq!(element.n_dofs(), 60);
+    }
+
+    #[test]
+    fn test_create_element_tri3() {
+        let element = create_element(ElementType::Tri3);
+        assert_eq!(element.n_nodes(), 3);
+        assert_eq!(element.dofs_per_node(), 2);
+        assert_eq!(element.n_dofs(), 6);
+    }
+
+    #[test]
+    fn test_create_element_quad4() {
+        let element = create_element(ElementType::Quad4);
+        assert_eq!(element.n_nodes(), 4);
+        assert_eq!(element.dofs_per_node(), 2);
+        assert_eq!(element.n_dofs(), 8);
+    }
+
+    #[test]
+    fn test_create_element_with_thickness_tri3() {
+        let element = create_element_with_thickness(ElementType::Tri3, 0.5);
+        assert_eq!(element.n_nodes(), 3);
+        assert_eq!(element.dofs_per_node(), 2);
+        assert_eq!(element.n_dofs(), 6);
+    }
+
+    #[test]
+    fn test_create_element_with_thickness_quad4() {
+        let element = create_element_with_thickness(ElementType::Quad4, 2.0);
+        assert_eq!(element.n_nodes(), 4);
+        assert_eq!(element.dofs_per_node(), 2);
+        assert_eq!(element.n_dofs(), 8);
     }
 }
