@@ -44,8 +44,10 @@ pub mod hex20;
 pub mod hex8;
 pub mod plane_strain;
 pub mod plane_stress;
+pub mod quad8;
 pub mod tet10;
 pub mod tet4;
+pub mod tri6;
 
 pub use axisymmetric::{Quad4Axisymmetric, Tri3Axisymmetric};
 pub use gauss::{gauss_1d, gauss_hex, gauss_quad, gauss_tet, gauss_tri, GaussPoint};
@@ -53,8 +55,10 @@ pub use hex20::Hex20;
 pub use hex8::Hex8;
 pub use plane_strain::{Quad4PlaneStrain, Tri3PlaneStrain};
 pub use plane_stress::{Quad4, Tri3};
+pub use quad8::Quad8;
 pub use tet10::Tet10;
 pub use tet4::Tet4;
+pub use tri6::Tri6;
 
 /// Finite element interface.
 ///
@@ -143,21 +147,16 @@ pub fn create_element(element_type: ElementType) -> Box<dyn Element> {
         ElementType::Tet10 => Box::new(Tet10::new()),
         ElementType::Hex8 => Box::new(Hex8::new()),
         ElementType::Hex20 => Box::new(Hex20::new()),
-        ElementType::Tri3 | ElementType::Quad4 => {
+        ElementType::Tri3 | ElementType::Tri6 | ElementType::Quad4 | ElementType::Quad8 => {
             // Use default thickness of 1.0 for plane stress elements
             create_element_with_thickness(element_type, 1.0)
         }
-        _ => unimplemented!(
-            "Element type {:?} is not yet implemented. \
-             Currently supported: Tet4, Tet10, Hex8, Hex20, Tri3, Quad4",
-            element_type
-        ),
     }
 }
 
 /// Create a 2D element with specified thickness.
 ///
-/// For 2D plane stress elements (Tri3, Quad4), the thickness parameter
+/// For 2D plane stress elements (Tri3, Tri6, Quad4, Quad8), the thickness parameter
 /// affects the stiffness matrix: K = t * ∫∫ B^T * D * B dA
 ///
 /// # Arguments
@@ -180,11 +179,19 @@ pub fn create_element(element_type: ElementType) -> Box<dyn Element> {
 /// let element = create_element_with_thickness(ElementType::Tri3, 0.1);
 /// assert_eq!(element.n_nodes(), 3);
 /// assert_eq!(element.dofs_per_node(), 2);
+///
+/// let tri6 = create_element_with_thickness(ElementType::Tri6, 0.5);
+/// assert_eq!(tri6.n_nodes(), 6);
+///
+/// let quad8 = create_element_with_thickness(ElementType::Quad8, 1.0);
+/// assert_eq!(quad8.n_nodes(), 8);
 /// ```
 pub fn create_element_with_thickness(element_type: ElementType, thickness: f64) -> Box<dyn Element> {
     match element_type {
         ElementType::Tri3 => Box::new(Tri3::new(thickness)),
+        ElementType::Tri6 => Box::new(Tri6::new(thickness)),
         ElementType::Quad4 => Box::new(Quad4::new(thickness)),
+        ElementType::Quad8 => Box::new(Quad8::new(thickness)),
         _ => panic!(
             "Element type {:?} does not support thickness parameter. \
              Use create_element() for 3D elements.",
@@ -259,5 +266,37 @@ mod tests {
         assert_eq!(element.n_nodes(), 4);
         assert_eq!(element.dofs_per_node(), 2);
         assert_eq!(element.n_dofs(), 8);
+    }
+
+    #[test]
+    fn test_create_element_tri6() {
+        let element = create_element(ElementType::Tri6);
+        assert_eq!(element.n_nodes(), 6);
+        assert_eq!(element.dofs_per_node(), 2);
+        assert_eq!(element.n_dofs(), 12);
+    }
+
+    #[test]
+    fn test_create_element_quad8() {
+        let element = create_element(ElementType::Quad8);
+        assert_eq!(element.n_nodes(), 8);
+        assert_eq!(element.dofs_per_node(), 2);
+        assert_eq!(element.n_dofs(), 16);
+    }
+
+    #[test]
+    fn test_create_element_with_thickness_tri6() {
+        let element = create_element_with_thickness(ElementType::Tri6, 0.5);
+        assert_eq!(element.n_nodes(), 6);
+        assert_eq!(element.dofs_per_node(), 2);
+        assert_eq!(element.n_dofs(), 12);
+    }
+
+    #[test]
+    fn test_create_element_with_thickness_quad8() {
+        let element = create_element_with_thickness(ElementType::Quad8, 2.0);
+        assert_eq!(element.n_nodes(), 8);
+        assert_eq!(element.dofs_per_node(), 2);
+        assert_eq!(element.n_dofs(), 16);
     }
 }
