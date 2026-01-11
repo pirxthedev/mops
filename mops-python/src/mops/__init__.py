@@ -32,6 +32,7 @@ from mops._core import (
     Mesh,
     Results,
     SolverConfig,
+    compute_element_stress,
     element_stiffness,
     element_volume,
     solve_simple,
@@ -61,6 +62,7 @@ __all__ = [
     "solve_simple",
     "element_stiffness",
     "element_volume",
+    "compute_element_stress",
     "solver_info",
     "version",
 ]

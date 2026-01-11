@@ -22,6 +22,7 @@ pub mod material;
 pub mod sparse;
 pub mod assembly;
 pub mod solver;
+pub mod stress;
 pub mod error;
 
 pub use types::{Point3, StressTensor, StrainTensor};
@@ -30,4 +31,5 @@ pub use mesh::Mesh;
 pub use material::Material;
 pub use sparse::CsrMatrix;
 pub use solver::{Solver, FaerCholeskySolver, CachedCholeskySolver, SolverConfig, SolverType, select_solver};
+pub use stress::{recover_stresses, StressField, ElementStress, compute_nodal_stresses};
 pub use error::{Error, Result};

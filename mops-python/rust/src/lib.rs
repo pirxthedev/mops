@@ -13,6 +13,7 @@ use mops_core::element::create_element;
 use mops_core::material::Material as CoreMaterial;
 use mops_core::mesh::{ElementType, Mesh};
 use mops_core::solver::{FaerCholeskySolver, Solver, SolverConfig, SolverType};
+use mops_core::stress::{recover_stresses, StressField};
 use mops_core::types::Point3;
 
 /// Material definition for Python.
@@ -264,6 +265,11 @@ impl PySolverConfig {
 pub struct PyResults {
     displacements: Vec<f64>,
     n_nodes: usize,
+    n_elements: usize,
+    /// Element stress data: for each element, the average stress tensor (6 components).
+    element_stresses: Vec<[f64; 6]>,
+    /// Von Mises stress per element.
+    von_mises_stresses: Vec<f64>,
 }
 
 #[pymethods]
@@ -308,11 +314,59 @@ impl PyResults {
             .fold(0.0, f64::max)
     }
 
+    /// Get element stress tensors (n_elements x 6).
+    ///
+    /// Each row contains the average stress tensor components for one element
+    /// in Voigt notation: [sigma_xx, sigma_yy, sigma_zz, tau_xy, tau_yz, tau_xz]
+    fn stress<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f64>> {
+        let data: Vec<Vec<f64>> = self.element_stresses
+            .iter()
+            .map(|s| s.to_vec())
+            .collect();
+        PyArray2::from_vec2(py, &data).expect("from_vec2 should succeed")
+    }
+
+    /// Get von Mises stress per element (n_elements,).
+    fn von_mises<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
+        PyArray1::from_vec(py, self.von_mises_stresses.clone())
+    }
+
+    /// Get maximum von Mises stress across all elements.
+    fn max_von_mises(&self) -> f64 {
+        self.von_mises_stresses.iter().copied().fold(0.0, f64::max)
+    }
+
+    /// Get stress for a specific element by index.
+    ///
+    /// Returns the average stress tensor [sigma_xx, sigma_yy, sigma_zz, tau_xy, tau_yz, tau_xz]
+    fn element_stress<'py>(&self, py: Python<'py>, element_id: usize) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        if element_id >= self.n_elements {
+            return Err(PyValueError::new_err(format!(
+                "Element index {} out of bounds (n_elements={})",
+                element_id, self.n_elements
+            )));
+        }
+        Ok(PyArray1::from_vec(py, self.element_stresses[element_id].to_vec()))
+    }
+
+    /// Get element von Mises stress by element index.
+    fn element_von_mises(&self, element_id: usize) -> PyResult<f64> {
+        if element_id >= self.n_elements {
+            return Err(PyValueError::new_err(format!(
+                "Element index {} out of bounds (n_elements={})",
+                element_id, self.n_elements
+            )));
+        }
+        Ok(self.von_mises_stresses[element_id])
+    }
+
     fn __repr__(&self) -> String {
         format!(
-            "Results(n_nodes={}, max_disp={:.3e})",
+            "Results(n_nodes={}, n_elements={}, max_disp={:.3e}, max_vm={:.3e})",
             self.n_nodes,
-            self.max_displacement()
+            self.n_elements,
+            self.max_displacement(),
+            self.max_von_mises()
         )
     }
 }
@@ -387,9 +441,15 @@ fn solve_simple(
         for (&dof, &value) in &system.constraints {
             displacements[dof] = value;
         }
+        // Recover stresses from constrained displacements
+        let stress_field = recover_stresses(&mesh.inner, &core_material, &displacements);
+        let (element_stresses, von_mises_stresses) = extract_stress_data(&stress_field);
         return Ok(PyResults {
             displacements,
             n_nodes: mesh.inner.n_nodes(),
+            n_elements: mesh.inner.n_elements(),
+            element_stresses,
+            von_mises_stresses,
         });
     }
 
@@ -439,10 +499,37 @@ fn solve_simple(
         displacements[dof] = value;
     }
 
+    // Recover stresses from displacement solution
+    let stress_field = recover_stresses(&mesh.inner, &core_material, &displacements);
+    let (element_stresses, von_mises_stresses) = extract_stress_data(&stress_field);
+
     Ok(PyResults {
         displacements,
         n_nodes: mesh.inner.n_nodes(),
+        n_elements: mesh.inner.n_elements(),
+        element_stresses,
+        von_mises_stresses,
     })
+}
+
+/// Extract stress data from StressField into arrays for PyResults.
+fn extract_stress_data(stress_field: &StressField) -> (Vec<[f64; 6]>, Vec<f64>) {
+    let element_stresses: Vec<[f64; 6]> = stress_field
+        .element_stresses
+        .iter()
+        .map(|es| {
+            let avg = es.average_stress();
+            [avg.0[0], avg.0[1], avg.0[2], avg.0[3], avg.0[4], avg.0[5]]
+        })
+        .collect();
+
+    let von_mises_stresses: Vec<f64> = stress_field
+        .element_stresses
+        .iter()
+        .map(|es| es.average_stress().von_mises())
+        .collect();
+
+    (element_stresses, von_mises_stresses)
 }
 
 /// Compute element stiffness matrix for a single element.
@@ -551,6 +638,83 @@ fn element_volume(element_type: &str, nodes: PyReadonlyArray2<f64>) -> PyResult<
     Ok(element.volume(&coords))
 }
 
+/// Compute stress tensor for a single element given displacements.
+///
+/// This function computes the stress at the integration points of a single element
+/// given its nodal coordinates, nodal displacements, and material properties.
+///
+/// Args:
+///     element_type: Element type string ("tet4", "tet10", "hex8")
+///     nodes: Nx3 array of node coordinates for this element
+///     displacements: Flat array of nodal displacements (N*3 elements: [u0, v0, w0, u1, v1, w1, ...])
+///     material: Material properties
+///
+/// Returns:
+///     2D numpy array of shape (n_integration_points, 6) containing stress tensors
+///     in Voigt notation: [sigma_xx, sigma_yy, sigma_zz, tau_xy, tau_yz, tau_xz]
+#[pyfunction]
+fn compute_element_stress<'py>(
+    py: Python<'py>,
+    element_type: &str,
+    nodes: PyReadonlyArray2<f64>,
+    displacements: PyReadonlyArray1<f64>,
+    material: &PyMaterial,
+) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    let elem_type = match element_type {
+        "tet4" => ElementType::Tet4,
+        "tet10" => ElementType::Tet10,
+        "hex8" => ElementType::Hex8,
+        _ => {
+            return Err(PyValueError::new_err(format!(
+                "Unknown element type: {}. Valid types: tet4, tet10, hex8",
+                element_type
+            )))
+        }
+    };
+
+    let nodes_shape = nodes.shape();
+    let expected_nodes = elem_type.n_nodes();
+    let expected_dofs = expected_nodes * 3;
+
+    if nodes_shape.len() != 2 || nodes_shape[0] != expected_nodes || nodes_shape[1] != 3 {
+        return Err(PyValueError::new_err(format!(
+            "nodes must be {}x3 array for {} element",
+            expected_nodes, element_type
+        )));
+    }
+
+    let disp_array = displacements.as_array();
+    if disp_array.len() != expected_dofs {
+        return Err(PyValueError::new_err(format!(
+            "displacements must have {} elements for {} element",
+            expected_dofs, element_type
+        )));
+    }
+
+    // Convert nodes to Point3 array
+    let nodes_array = nodes.as_array();
+    let coords: Vec<Point3> = (0..expected_nodes)
+        .map(|i| Point3::new(nodes_array[[i, 0]], nodes_array[[i, 1]], nodes_array[[i, 2]]))
+        .collect();
+
+    // Convert displacements to slice
+    let disp_vec: Vec<f64> = disp_array.iter().copied().collect();
+
+    // Create element and compute stress
+    let element = create_element(elem_type);
+    let core_material = material.to_core();
+    let stresses = element.stress(&coords, &disp_vec, &core_material);
+
+    // Convert to 2D nested vec for PyArray2
+    let data: Vec<Vec<f64>> = stresses
+        .iter()
+        .map(|s| vec![s.0[0], s.0[1], s.0[2], s.0[3], s.0[4], s.0[5]])
+        .collect();
+
+    PyArray2::from_vec2(py, &data)
+        .map_err(|e| PyRuntimeError::new_err(format!("Failed to create array: {}", e)))
+}
+
 /// Check solver library availability.
 #[pyfunction]
 fn solver_info() -> HashMap<String, bool> {
@@ -579,6 +743,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(solve_simple, m)?)?;
     m.add_function(wrap_pyfunction!(element_stiffness, m)?)?;
     m.add_function(wrap_pyfunction!(element_volume, m)?)?;
+    m.add_function(wrap_pyfunction!(compute_element_stress, m)?)?;
     m.add_function(wrap_pyfunction!(solver_info, m)?)?;
     m.add_function(wrap_pyfunction!(version, m)?)?;
     Ok(())
