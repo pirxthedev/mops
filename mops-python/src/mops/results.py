@@ -1734,6 +1734,150 @@ class Results:
             f"max_disp={self.max_displacement():.3e}, max_vm={self.max_von_mises():.3e})"
         )
 
+    # =========================================================================
+    # Visualization Methods
+    # =========================================================================
+
+    def plot(
+        self,
+        field: str = "von_mises",
+        *,
+        model: "Model | None" = None,
+        cmap: str | None = None,
+        show_edges: bool = True,
+        show_scalar_bar: bool = True,
+        scalar_bar_title: str | None = None,
+        clim: tuple[float, float] | None = None,
+        deformed: bool = False,
+        scale_factor: float = 1.0,
+        opacity: float = 1.0,
+        window_size: tuple[int, int] = (1024, 768),
+        background: str = "white",
+        title: str | None = None,
+        screenshot: str | None = None,
+        notebook: bool | None = None,
+        off_screen: bool | None = None,
+        return_plotter: bool = False,
+    ) -> object | None:
+        """Plot results using PyVista.
+
+        Creates an interactive 3D visualization of the analysis results.
+        In Jupyter notebooks, renders inline. For scripts, opens an interactive window.
+
+        Args:
+            field: Field to visualize. Options:
+                - "displacement", "displacement_magnitude", "displacement_x/y/z"
+                - "von_mises", "stress_xx/yy/zz/xy/yz/xz"
+                - "principal_1/2/3", "tresca", "hydrostatic"
+            model: Model object (required for in-memory results, optional if
+                results were loaded from HDF5 with mesh data).
+            cmap: Colormap name (e.g., "jet", "viridis"). Auto-selected if None.
+            show_edges: Show mesh edges (default True).
+            show_scalar_bar: Show color bar (default True).
+            scalar_bar_title: Custom title for scalar bar.
+            clim: Color limits as (min, max). Auto-scaled if None.
+            deformed: Show deformed shape (default False).
+            scale_factor: Deformation scale factor (default 1.0).
+            opacity: Surface opacity 0-1 (default 1.0).
+            window_size: Window size in pixels (default (1024, 768)).
+            background: Background color (default "white").
+            title: Plot title.
+            screenshot: Save screenshot to this path.
+            notebook: Force notebook mode (auto-detected if None).
+            off_screen: Render off-screen without display.
+            return_plotter: Return PyVista plotter instead of showing.
+
+        Returns:
+            PyVista Plotter if return_plotter=True, else None.
+
+        Raises:
+            ImportError: If pyvista is not installed.
+            ValueError: If mesh data not available and model not provided.
+
+        Example::
+
+            # Basic usage
+            results.plot("von_mises")
+
+            # With deformed shape
+            results.plot("displacement_magnitude", deformed=True, scale_factor=100)
+
+            # Save to file
+            results.plot("von_mises", screenshot="stress.png")
+        """
+        from mops.viz import plot_results
+
+        return plot_results(
+            self,
+            model=model,
+            field=field,
+            cmap=cmap,
+            show_edges=show_edges,
+            show_scalar_bar=show_scalar_bar,
+            scalar_bar_title=scalar_bar_title,
+            clim=clim,
+            deformed=deformed,
+            scale_factor=scale_factor,
+            opacity=opacity,
+            window_size=window_size,
+            background=background,
+            title=title,
+            screenshot=screenshot,
+            notebook=notebook,
+            off_screen=off_screen,
+            return_plotter=return_plotter,
+        )
+
+    def export(
+        self,
+        path: str,
+        *,
+        model: "Model | None" = None,
+        deformed: bool = False,
+        scale_factor: float = 1.0,
+        fields: list[str] | None = None,
+    ) -> None:
+        """Export results to VTU format for ParaView.
+
+        Creates a VTK Unstructured Grid file (.vtu) containing mesh geometry
+        and result fields. Can be opened in ParaView or other VTK-compatible tools.
+
+        Args:
+            path: Output file path (should end in .vtu).
+            model: Model object (required for in-memory results, optional if
+                results were loaded from HDF5 with mesh data).
+            deformed: Export deformed shape (default False).
+            scale_factor: Deformation scale factor (default 1.0).
+            fields: List of fields to include. If None, exports all available fields:
+                displacement, displacement_magnitude, von_mises, principal stresses,
+                tresca, hydrostatic.
+
+        Raises:
+            ImportError: If pyvista is not installed.
+            ValueError: If mesh data not available and model not provided.
+
+        Example::
+
+            # Export all fields
+            results.export("output.vtu", model=model)
+
+            # Export specific fields
+            results.export("output.vtu", model=model, fields=["von_mises", "displacement"])
+
+            # Export deformed shape
+            results.export("deformed.vtu", model=model, deformed=True, scale_factor=100)
+        """
+        from mops.viz import export_vtu
+
+        export_vtu(
+            self,
+            path,
+            model=model,
+            deformed=deformed,
+            scale_factor=scale_factor,
+            fields=fields,
+        )
+
 
 def _create_chunked_dataset(
     group: "h5py.Group",

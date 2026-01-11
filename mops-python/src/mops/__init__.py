@@ -45,6 +45,17 @@ from mops.loads import Force, Pressure, Moment
 from mops.query import Nodes, Elements, Faces
 from mops.results import Results
 
+# Visualization (optional - requires pyvista)
+try:
+    from mops.viz import plot_results, export_vtu, plot_mesh, create_pyvista_mesh
+    _HAS_PYVISTA = True
+except ImportError:
+    _HAS_PYVISTA = False
+    plot_results = None
+    export_vtu = None
+    plot_mesh = None
+    create_pyvista_mesh = None
+
 
 def _unwrap_mesh(mesh):
     """Unwrap Python Mesh wrapper to get the underlying Rust mesh."""
@@ -101,6 +112,11 @@ __all__ = [
     "compute_element_stress",
     "solver_info",
     "version",
+    # Visualization (optional)
+    "plot_results",
+    "export_vtu",
+    "plot_mesh",
+    "create_pyvista_mesh",
 ]
 
 __version__ = version()
