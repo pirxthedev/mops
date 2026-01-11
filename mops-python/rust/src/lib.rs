@@ -12,7 +12,7 @@ use mops_core::assembly::{assemble, AssemblyOptions, BoundaryCondition};
 use mops_core::element::create_element;
 use mops_core::material::Material as CoreMaterial;
 use mops_core::mesh::{ElementType, Mesh};
-use mops_core::solver::{FaerCholeskySolver, SolveStats, Solver, SolverConfig, SolverType};
+use mops_core::solver::{select_solver, SolveStats, SolverConfig, SolverType};
 use mops_core::stress::{recover_stresses, StressField};
 use mops_core::types::Point3;
 
@@ -210,11 +210,26 @@ impl PyMesh {
         PyArray2::from_vec2(py, &data).expect("from_vec2 should succeed")
     }
 
+    #[getter]
+    fn element_type(&self) -> String {
+        match self.element_type {
+            ElementType::Tet4 => "tet4".to_string(),
+            ElementType::Tet10 => "tet10".to_string(),
+            ElementType::Hex8 => "hex8".to_string(),
+            ElementType::Hex20 => "hex20".to_string(),
+            ElementType::Tri3 => "tri3".to_string(),
+            ElementType::Tri6 => "tri6".to_string(),
+            ElementType::Quad4 => "quad4".to_string(),
+            ElementType::Quad8 => "quad8".to_string(),
+        }
+    }
+
     fn __repr__(&self) -> String {
         format!(
-            "Mesh(nodes={}, elements={})",
+            "Mesh(nodes={}, elements={}, type={})",
             self.inner.n_nodes(),
-            self.inner.n_elements()
+            self.inner.n_elements(),
+            self.element_type()
         )
     }
 }
@@ -253,6 +268,33 @@ impl PySolverConfig {
             tolerance,
             max_iterations,
         })
+    }
+
+    #[getter]
+    fn solver_type(&self) -> &str {
+        &self.solver_type
+    }
+
+    #[getter]
+    fn auto_threshold(&self) -> usize {
+        self.auto_threshold
+    }
+
+    #[getter]
+    fn tolerance(&self) -> f64 {
+        self.tolerance
+    }
+
+    #[getter]
+    fn max_iterations(&self) -> usize {
+        self.max_iterations
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "SolverConfig(solver_type='{}', auto_threshold={}, tolerance={:.0e}, max_iterations={})",
+            self.solver_type, self.auto_threshold, self.tolerance, self.max_iterations
+        )
     }
 }
 
@@ -525,16 +567,16 @@ impl PyResults {
 ///                  dof_index: 0=ux, 1=uy, 2=uz
 ///     loaded_nodes: Array of node indices where forces are applied
 ///     load_vector: [fx, fy, fz] force components applied at each loaded node
-///     _config: Optional solver configuration
+///     config: Optional solver configuration
 #[pyfunction]
-#[pyo3(signature = (mesh, material, constraints, loaded_nodes, load_vector, _config=None))]
+#[pyo3(signature = (mesh, material, constraints, loaded_nodes, load_vector, config=None))]
 fn solve_simple(
     mesh: &PyMesh,
     material: &PyMaterial,
     constraints: PyReadonlyArray2<f64>,
     loaded_nodes: PyReadonlyArray1<i64>,
     load_vector: PyReadonlyArray1<f64>,
-    _config: Option<&PySolverConfig>,
+    config: Option<&PySolverConfig>,
 ) -> PyResult<PyResults> {
     let core_material = material.to_core();
 
@@ -650,7 +692,9 @@ fn solve_simple(
     let reduced_matrix = reduced_triplet.to_csr();
 
     // Solve the reduced system with statistics
-    let solver = FaerCholeskySolver::new();
+    // Use config if provided, otherwise use defaults
+    let core_config = config.map(|c| c.to_core()).unwrap_or_default();
+    let solver = select_solver(&core_config, n_free);
     let (reduced_solution, solve_stats) = solver
         .solve_with_stats(&reduced_matrix, &reduced_rhs)
         .map_err(|e| PyRuntimeError::new_err(format!("Solver error: {}", e)))?;
