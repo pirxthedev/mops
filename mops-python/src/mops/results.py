@@ -1151,6 +1151,212 @@ class Results:
             raise ValueError(f"Element index {element_id} out of bounds (n_elements={len(vm)})")
         return float(vm[element_id])
 
+    # =========================================================================
+    # Derived Quantities
+    # =========================================================================
+
+    def principal_stresses(self) -> NDArray[np.float64]:
+        """Get principal stresses per element.
+
+        Computes the eigenvalues of the stress tensor for each element.
+        Principal stresses are returned in descending order: σ₁ ≥ σ₂ ≥ σ₃.
+
+        Returns:
+            (n_elements, 3) array of principal stresses [σ₁, σ₂, σ₃] per element.
+
+        Note:
+            This is computed on-demand from the stress tensor data. For HDF5-backed
+            results, the computation is performed once and cached in memory.
+        """
+        if not hasattr(self, "_principal_stress_cache"):
+            self._principal_stress_cache = None
+
+        if self._principal_stress_cache is not None:
+            return self._principal_stress_cache
+
+        # Check HDF5 cache
+        if self._lazy and self._h5file is not None:
+            if "/stress/element_principal" in self._h5file:
+                self._principal_stress_cache = self._h5file["/stress/element_principal"][:]
+                return self._principal_stress_cache
+
+        # Compute from stress tensor
+        from mops.derived import principal_stresses as compute_principal
+
+        self._principal_stress_cache = compute_principal(self.stress())
+        return self._principal_stress_cache
+
+    def tresca(self) -> NDArray[np.float64]:
+        """Get Tresca (maximum shear) equivalent stress per element.
+
+        The Tresca stress is defined as: σ_tresca = σ₁ - σ₃
+
+        This criterion is used in maximum shear stress failure theory
+        and is more conservative than von Mises for many materials.
+
+        Returns:
+            (n_elements,) array of Tresca stress values.
+        """
+        if not hasattr(self, "_tresca_cache"):
+            self._tresca_cache = None
+
+        if self._tresca_cache is not None:
+            return self._tresca_cache
+
+        # Check HDF5 cache
+        if self._lazy and self._h5file is not None:
+            if "/stress/element_tresca" in self._h5file:
+                self._tresca_cache = self._h5file["/stress/element_tresca"][:]
+                return self._tresca_cache
+
+        # Compute from stress tensor
+        from mops.derived import tresca_stress
+
+        self._tresca_cache = tresca_stress(self.stress())
+        return self._tresca_cache
+
+    def max_tresca(self) -> float:
+        """Get maximum Tresca stress.
+
+        Returns:
+            Maximum Tresca stress across all elements.
+        """
+        return float(np.max(self.tresca()))
+
+    def max_shear_stress(self) -> NDArray[np.float64]:
+        """Get maximum shear stress per element.
+
+        τ_max = (σ₁ - σ₃) / 2
+
+        Returns:
+            (n_elements,) array of maximum shear stress values.
+        """
+        return self.tresca() / 2.0
+
+    def hydrostatic_stress(self) -> NDArray[np.float64]:
+        """Get hydrostatic (mean) stress per element.
+
+        σ_h = (σ_xx + σ_yy + σ_zz) / 3
+
+        Returns:
+            (n_elements,) array of hydrostatic stress values.
+        """
+        if not hasattr(self, "_hydrostatic_cache"):
+            self._hydrostatic_cache = None
+
+        if self._hydrostatic_cache is not None:
+            return self._hydrostatic_cache
+
+        # Check HDF5 cache
+        if self._lazy and self._h5file is not None:
+            if "/stress/element_hydrostatic" in self._h5file:
+                self._hydrostatic_cache = self._h5file["/stress/element_hydrostatic"][:]
+                return self._hydrostatic_cache
+
+        # Compute from stress tensor
+        from mops.derived import hydrostatic_stress
+
+        self._hydrostatic_cache = hydrostatic_stress(self.stress())
+        return self._hydrostatic_cache
+
+    def pressure(self) -> NDArray[np.float64]:
+        """Get pressure (negative hydrostatic stress) per element.
+
+        p = -σ_h = -(σ_xx + σ_yy + σ_zz) / 3
+
+        Returns:
+            (n_elements,) array of pressure values.
+        """
+        return -self.hydrostatic_stress()
+
+    def stress_intensity(self) -> NDArray[np.float64]:
+        """Get stress intensity per element.
+
+        σ_int = max(|σ₁ - σ₂|, |σ₂ - σ₃|, |σ₃ - σ₁|)
+
+        This is used in some codes as an alternative to Tresca stress.
+
+        Returns:
+            (n_elements,) array of stress intensity values.
+        """
+        if not hasattr(self, "_intensity_cache"):
+            self._intensity_cache = None
+
+        if self._intensity_cache is not None:
+            return self._intensity_cache
+
+        # Check HDF5 cache
+        if self._lazy and self._h5file is not None:
+            if "/stress/element_intensity" in self._h5file:
+                self._intensity_cache = self._h5file["/stress/element_intensity"][:]
+                return self._intensity_cache
+
+        # Compute from principal stresses
+        principals = self.principal_stresses()
+        s1, s2, s3 = principals[:, 0], principals[:, 1], principals[:, 2]
+        self._intensity_cache = np.maximum(
+            np.abs(s1 - s2), np.maximum(np.abs(s2 - s3), np.abs(s3 - s1))
+        )
+        return self._intensity_cache
+
+    @property
+    def principal_stress_field(self) -> ScalarElementField:
+        """Query-optimized accessor for maximum principal stress field (σ₁).
+
+        Returns a ScalarElementField for the first (maximum) principal stress.
+
+        Example::
+
+            # Max principal stress at tip
+            max_s1 = results.principal_stress_field.max()
+        """
+        principals = self.principal_stresses()
+        return ScalarElementField(
+            data=principals[:, 0],
+            h5file=self._h5file if self._lazy else None,
+            h5path="/stress/element_principal",  # Would need HDF5 indexing
+            mesh_nodes_h5path="/mesh/nodes",
+            mesh_elements_h5path="/mesh/elements",
+        )
+
+    @property
+    def tresca_field(self) -> ScalarElementField:
+        """Query-optimized accessor for Tresca stress field.
+
+        Example::
+
+            # Max Tresca stress
+            max_tresca = results.tresca_field.max()
+        """
+        if self._lazy and self._h5file is not None:
+            return ScalarElementField(
+                h5file=self._h5file,
+                h5path="/stress/element_tresca",
+                mesh_nodes_h5path="/mesh/nodes",
+                mesh_elements_h5path="/mesh/elements",
+            )
+
+        return ScalarElementField(data=self.tresca())
+
+    @property
+    def hydrostatic_field(self) -> ScalarElementField:
+        """Query-optimized accessor for hydrostatic stress field.
+
+        Example::
+
+            # Mean hydrostatic stress
+            avg_hydro = results.hydrostatic_field.mean()
+        """
+        if self._lazy and self._h5file is not None:
+            return ScalarElementField(
+                h5file=self._h5file,
+                h5path="/stress/element_hydrostatic",
+                mesh_nodes_h5path="/mesh/nodes",
+                mesh_elements_h5path="/mesh/elements",
+            )
+
+        return ScalarElementField(data=self.hydrostatic_stress())
+
     def save(
         self,
         path: str | Path,
@@ -1255,6 +1461,35 @@ class Results:
             _create_chunked_dataset(
                 stress_grp, "element_von_mises", vm_data,
                 chunks=(min(10000, len(vm_data)),),
+            )
+
+            # Derived quantities - computed on-demand and cached in HDF5
+            # Principal stresses
+            principal_data = self.principal_stresses()
+            _create_chunked_dataset(
+                stress_grp, "element_principal", principal_data,
+                chunks=(min(1000, len(principal_data)), 3),
+            )
+
+            # Tresca stress
+            tresca_data = self.tresca()
+            _create_chunked_dataset(
+                stress_grp, "element_tresca", tresca_data,
+                chunks=(min(10000, len(tresca_data)),),
+            )
+
+            # Hydrostatic stress
+            hydro_data = self.hydrostatic_stress()
+            _create_chunked_dataset(
+                stress_grp, "element_hydrostatic", hydro_data,
+                chunks=(min(10000, len(hydro_data)),),
+            )
+
+            # Stress intensity
+            intensity_data = self.stress_intensity()
+            _create_chunked_dataset(
+                stress_grp, "element_intensity", intensity_data,
+                chunks=(min(10000, len(intensity_data)),),
             )
 
     def _save_materials(self, f: "h5py.File", model: "Model") -> None:

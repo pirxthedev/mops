@@ -579,3 +579,131 @@ class TestResultsEdgeCases:
         with Results.load(temp_h5_path) as loaded:
             r = repr(loaded)
             assert "file" in r  # source=file for lazy loading
+
+
+# =============================================================================
+# Derived Quantities Tests
+# =============================================================================
+
+
+class TestResultsDerivedQuantities:
+    """Test derived quantity computation on Results."""
+
+    def test_principal_stresses_shape(self, solved_results):
+        """Principal stresses should have shape (n_elements, 3)."""
+        principals = solved_results.principal_stresses()
+        assert principals.shape == (1, 3)
+        assert principals.dtype == np.float64
+
+    def test_principal_stresses_ordering(self, solved_results):
+        """Principal stresses should be in descending order."""
+        principals = solved_results.principal_stresses()
+        assert principals[0, 0] >= principals[0, 1] >= principals[0, 2]
+
+    def test_tresca_shape(self, solved_results):
+        """Tresca stress should have shape (n_elements,)."""
+        tresca = solved_results.tresca()
+        assert tresca.shape == (1,)
+        assert tresca.dtype == np.float64
+
+    def test_max_tresca(self, solved_results):
+        """Max Tresca should be a positive scalar."""
+        max_tresca = solved_results.max_tresca()
+        assert isinstance(max_tresca, float)
+        assert max_tresca >= 0
+
+    def test_tresca_relation_to_principal(self, solved_results):
+        """Tresca should equal σ1 - σ3."""
+        principals = solved_results.principal_stresses()
+        tresca = solved_results.tresca()
+        expected = principals[:, 0] - principals[:, 2]
+        np.testing.assert_allclose(tresca, expected, rtol=1e-10)
+
+    def test_max_shear_stress(self, solved_results):
+        """Max shear should be half of Tresca."""
+        tresca = solved_results.tresca()
+        max_shear = solved_results.max_shear_stress()
+        np.testing.assert_allclose(max_shear, tresca / 2.0, rtol=1e-10)
+
+    def test_hydrostatic_stress_shape(self, solved_results):
+        """Hydrostatic stress should have shape (n_elements,)."""
+        hydro = solved_results.hydrostatic_stress()
+        assert hydro.shape == (1,)
+        assert hydro.dtype == np.float64
+
+    def test_pressure_relation(self, solved_results):
+        """Pressure should be negative hydrostatic stress."""
+        hydro = solved_results.hydrostatic_stress()
+        p = solved_results.pressure()
+        np.testing.assert_allclose(p, -hydro, rtol=1e-10)
+
+    def test_stress_intensity_shape(self, solved_results):
+        """Stress intensity should have shape (n_elements,)."""
+        intensity = solved_results.stress_intensity()
+        assert intensity.shape == (1,)
+        assert intensity.dtype == np.float64
+
+    def test_derived_caching(self, solved_results):
+        """Derived quantities should be cached."""
+        # First call computes
+        principals1 = solved_results.principal_stresses()
+        # Second call should return cached
+        principals2 = solved_results.principal_stresses()
+        assert principals1 is principals2
+
+
+class TestResultsDerivedRoundTrip:
+    """Test derived quantities survive HDF5 round-trip."""
+
+    def test_principal_stresses_roundtrip(self, simple_model, solved_results, temp_h5_path):
+        """Principal stresses should survive round-trip."""
+        original = solved_results.principal_stresses()
+
+        solved_results.save(temp_h5_path, model=simple_model)
+
+        with Results.load(temp_h5_path) as loaded:
+            loaded_principals = loaded.principal_stresses()
+            np.testing.assert_allclose(loaded_principals, original, rtol=1e-10)
+
+    def test_tresca_roundtrip(self, simple_model, solved_results, temp_h5_path):
+        """Tresca stress should survive round-trip."""
+        original = solved_results.tresca()
+
+        solved_results.save(temp_h5_path, model=simple_model)
+
+        with Results.load(temp_h5_path) as loaded:
+            loaded_tresca = loaded.tresca()
+            np.testing.assert_allclose(loaded_tresca, original, rtol=1e-10)
+
+    def test_hydrostatic_roundtrip(self, simple_model, solved_results, temp_h5_path):
+        """Hydrostatic stress should survive round-trip."""
+        original = solved_results.hydrostatic_stress()
+
+        solved_results.save(temp_h5_path, model=simple_model)
+
+        with Results.load(temp_h5_path) as loaded:
+            loaded_hydro = loaded.hydrostatic_stress()
+            np.testing.assert_allclose(loaded_hydro, original, rtol=1e-10)
+
+    def test_stress_intensity_roundtrip(self, simple_model, solved_results, temp_h5_path):
+        """Stress intensity should survive round-trip."""
+        original = solved_results.stress_intensity()
+
+        solved_results.save(temp_h5_path, model=simple_model)
+
+        with Results.load(temp_h5_path) as loaded:
+            loaded_intensity = loaded.stress_intensity()
+            np.testing.assert_allclose(loaded_intensity, original, rtol=1e-10)
+
+    def test_derived_hdf5_caching(self, simple_model, solved_results, temp_h5_path):
+        """Derived quantities should be read from HDF5 cache."""
+        import h5py
+
+        solved_results.save(temp_h5_path, model=simple_model)
+
+        # Verify derived quantities are stored in HDF5
+        with h5py.File(temp_h5_path, "r") as f:
+            assert "/stress/element_principal" in f
+            assert "/stress/element_tresca" in f
+            assert "/stress/element_hydrostatic" in f
+            assert "/stress/element_intensity" in f
