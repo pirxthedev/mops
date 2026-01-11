@@ -9,6 +9,7 @@
 //! - [`tet4`] - 4-node tetrahedron (constant strain)
 //! - [`tet10`] - 10-node tetrahedron (quadratic)
 //! - [`hex8`] - 8-node hexahedron (trilinear brick)
+//! - [`plane_stress`] - 2D plane stress elements (Tri3, Quad4)
 //!
 //! # Element Dispatch
 //!
@@ -36,17 +37,18 @@ use nalgebra::DMatrix;
 
 pub mod gauss;
 pub mod hex8;
+pub mod plane_stress;
 pub mod tet10;
 pub mod tet4;
 
 // Element implementations (to be added)
 // pub mod hex20;
-// pub mod plane_stress;
 // pub mod plane_strain;
 // pub mod axisymmetric;
 
 pub use gauss::{gauss_1d, gauss_hex, gauss_quad, gauss_tet, gauss_tri, GaussPoint};
 pub use hex8::Hex8;
+pub use plane_stress::{Quad4, Tri3};
 pub use tet10::Tet10;
 pub use tet4::Tet4;
 
