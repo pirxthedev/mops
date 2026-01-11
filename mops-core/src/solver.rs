@@ -8,12 +8,16 @@
 //!   Best for symmetric positive definite (SPD) matrices, which stiffness matrices
 //!   are after constraint application.
 //! - [`DenseLUSolver`]: Placeholder using nalgebra dense LU (for small test problems only).
+//! - [`IterativeSolver`]: PCG with AMG preconditioning via the kryst library (requires
+//!   the `iterative` feature). Best for large problems (>100k DOFs) where direct
+//!   factorization becomes memory-prohibitive.
 //!
 //! # Performance
 //!
 //! The faer-based sparse Cholesky solver is the production choice for direct solves.
-//! For very large problems (>100k DOFs), an iterative solver with AMG preconditioning
-//! would be more efficient, but that's not yet implemented.
+//! For very large problems (>100k DOFs), enable the `iterative` feature to use
+//! PCG with AMG preconditioning, which has O(n) memory complexity vs O(n^1.5)
+//! for direct methods in 3D FEA.
 
 use crate::error::{Error, Result};
 use crate::sparse::CsrMatrix;
@@ -375,22 +379,240 @@ impl Solver for CachedCholeskySolver {
     }
 }
 
+// ============================================================================
+// Iterative solver with AMG preconditioning (requires `iterative` feature)
+// ============================================================================
+
+#[cfg(feature = "iterative")]
+mod iterative {
+    use super::*;
+    use kryst::matrix::op::CsrOp;
+    use kryst::matrix::CsrMatrix as KrystCsr;
+    use kryst::prelude::{KspContext, PcType, SolverType as KrystSolverType};
+    use std::sync::Arc;
+
+    /// Configuration for the iterative solver.
+    #[derive(Debug, Clone)]
+    pub struct IterativeConfig {
+        /// Relative tolerance for convergence.
+        pub rtol: f64,
+        /// Absolute tolerance for convergence.
+        pub atol: f64,
+        /// Maximum number of iterations.
+        pub max_iterations: usize,
+        /// Preconditioner type.
+        pub preconditioner: PreconditionerType,
+    }
+
+    /// Available preconditioner types.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum PreconditionerType {
+        /// Algebraic Multigrid (best for FEA problems).
+        Amg,
+        /// Incomplete LU factorization with zero fill-in.
+        Ilu0,
+        /// Jacobi (diagonal) preconditioner.
+        Jacobi,
+        /// No preconditioning.
+        None,
+    }
+
+    impl Default for IterativeConfig {
+        fn default() -> Self {
+            Self {
+                rtol: 1e-10,
+                atol: 1e-14,
+                max_iterations: 10000,
+                preconditioner: PreconditionerType::Amg,
+            }
+        }
+    }
+
+    impl PreconditionerType {
+        fn to_kryst(self) -> PcType {
+            match self {
+                PreconditionerType::Amg => PcType::Amg,
+                PreconditionerType::Ilu0 => PcType::Ilu0,
+                PreconditionerType::Jacobi => PcType::Jacobi,
+                PreconditionerType::None => PcType::None,
+            }
+        }
+    }
+
+    /// Convert mops-core CsrMatrix to kryst CsrMatrix.
+    ///
+    /// kryst requires column indices to be sorted within each row, which is
+    /// guaranteed by our triplet-to-CSR conversion.
+    fn to_kryst_csr(matrix: &CsrMatrix) -> KrystCsr<f64> {
+        KrystCsr::from_csr(
+            matrix.nrows(),
+            matrix.ncols(),
+            matrix.row_offsets().to_vec(),
+            matrix.col_indices().to_vec(),
+            matrix.values().to_vec(),
+        )
+    }
+
+    /// Iterative solver using Preconditioned Conjugate Gradient (PCG) with AMG.
+    ///
+    /// This solver is optimal for large FEA problems where direct methods become
+    /// memory-prohibitive. It uses the kryst library's implementation of PCG with
+    /// Algebraic Multigrid (AMG) preconditioning.
+    ///
+    /// # Memory Complexity
+    ///
+    /// - O(n) vs O(n^1.5) for direct methods in 3D FEA
+    ///
+    /// # When to Use
+    ///
+    /// - Problem size > 100k DOFs
+    /// - Memory-constrained environments
+    /// - When factorization time dominates (iterative has better startup)
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let config = IterativeConfig::default();
+    /// let solver = IterativeSolver::new(config);
+    /// let solution = solver.solve(&stiffness_matrix, &force_vector)?;
+    /// ```
+    pub struct IterativeSolver {
+        config: IterativeConfig,
+    }
+
+    impl IterativeSolver {
+        /// Create a new iterative solver with the given configuration.
+        pub fn new(config: IterativeConfig) -> Self {
+            Self { config }
+        }
+
+        /// Create an iterative solver with default AMG-preconditioned PCG settings.
+        pub fn with_amg() -> Self {
+            Self::new(IterativeConfig::default())
+        }
+
+        /// Create an iterative solver with ILU(0) preconditioning.
+        pub fn with_ilu0() -> Self {
+            Self::new(IterativeConfig {
+                preconditioner: PreconditionerType::Ilu0,
+                ..Default::default()
+            })
+        }
+    }
+
+    impl Default for IterativeSolver {
+        fn default() -> Self {
+            Self::with_amg()
+        }
+    }
+
+    impl Solver for IterativeSolver {
+        fn solve(&self, matrix: &CsrMatrix, rhs: &[f64]) -> Result<Vec<f64>> {
+            let n = matrix.nrows();
+            if n == 0 {
+                return Ok(vec![]);
+            }
+
+            if n != matrix.ncols() {
+                return Err(Error::Solver("Matrix must be square".into()));
+            }
+
+            if n != rhs.len() {
+                return Err(Error::Solver("RHS size mismatch".into()));
+            }
+
+            // Convert to kryst CSR format
+            let kryst_csr = to_kryst_csr(matrix);
+            let operator = Arc::new(CsrOp::new(Arc::new(kryst_csr)));
+
+            // Set up KSP context
+            let mut ksp = KspContext::new();
+
+            // Configure solver type (CG for SPD matrices)
+            ksp.set_type(KrystSolverType::Cg)
+                .map_err(|e| Error::Solver(format!("Failed to set solver type: {}", e)))?;
+
+            // Configure preconditioner
+            ksp.set_pc_type(self.config.preconditioner.to_kryst(), None)
+                .map_err(|e| Error::Solver(format!("Failed to set preconditioner: {}", e)))?;
+
+            // Set operator
+            ksp.set_operators(operator, None);
+
+            // Configure tolerances
+            ksp.rtol = self.config.rtol;
+            ksp.atol = self.config.atol;
+            ksp.maxits = self.config.max_iterations;
+
+            // Setup (preconditioner factorization)
+            ksp.setup()
+                .map_err(|e| Error::Solver(format!("Solver setup failed: {}", e)))?;
+
+            // Solve
+            let mut solution = vec![0.0; n];
+            let _stats = ksp
+                .solve(rhs, &mut solution)
+                .map_err(|e| Error::Solver(format!("Iterative solve failed: {}", e)))?;
+
+            Ok(solution)
+        }
+
+        fn name(&self) -> &str {
+            match self.config.preconditioner {
+                PreconditionerType::Amg => "PCG with AMG (kryst)",
+                PreconditionerType::Ilu0 => "PCG with ILU(0) (kryst)",
+                PreconditionerType::Jacobi => "PCG with Jacobi (kryst)",
+                PreconditionerType::None => "CG unpreconditioned (kryst)",
+            }
+        }
+    }
+}
+
+#[cfg(feature = "iterative")]
+pub use iterative::{IterativeConfig, IterativeSolver, PreconditionerType};
+
 /// Select solver based on configuration and problem size.
+///
+/// # Solver Selection Logic
+///
+/// - `SolverType::Direct`: Always uses sparse Cholesky (faer)
+/// - `SolverType::Iterative`: Uses PCG+AMG if the `iterative` feature is enabled,
+///   otherwise falls back to direct solver
+/// - `SolverType::Auto`: Uses direct for small problems (< `auto_threshold` DOFs),
+///   iterative for large problems (if `iterative` feature enabled)
+///
+/// # Default Threshold
+///
+/// The default auto-selection threshold is 100,000 DOFs. Below this, direct
+/// methods are typically faster. Above this, iterative methods have better
+/// memory scaling.
 pub fn select_solver(config: &SolverConfig, n_dofs: usize) -> Box<dyn Solver> {
     match config.solver_type {
         SolverType::Direct => Box::new(FaerCholeskySolver::new()),
         SolverType::Iterative => {
-            // TODO: Implement iterative solver with hypre
-            // For now, fall back to direct solver
-            Box::new(FaerCholeskySolver::new())
+            #[cfg(feature = "iterative")]
+            {
+                Box::new(IterativeSolver::with_amg())
+            }
+            #[cfg(not(feature = "iterative"))]
+            {
+                // Fall back to direct solver if iterative feature not enabled
+                Box::new(FaerCholeskySolver::new())
+            }
         }
         SolverType::Auto => {
             if n_dofs < config.auto_threshold {
                 Box::new(FaerCholeskySolver::new())
             } else {
-                // TODO: Use iterative solver for large problems
-                // For now, use direct solver for all sizes
-                Box::new(FaerCholeskySolver::new())
+                #[cfg(feature = "iterative")]
+                {
+                    Box::new(IterativeSolver::with_amg())
+                }
+                #[cfg(not(feature = "iterative"))]
+                {
+                    // Fall back to direct solver if iterative feature not enabled
+                    Box::new(FaerCholeskySolver::new())
+                }
             }
         }
     }
@@ -629,5 +851,200 @@ mod tests {
         let b_vec = nalgebra::DVector::from_vec(rhs.clone());
         let residual = (&dense * &x_vec - &b_vec).norm();
         assert!(residual < 1e-10, "Residual too large: {}", residual);
+    }
+}
+
+// ============================================================================
+// Tests for iterative solver (require `iterative` feature)
+// ============================================================================
+
+#[cfg(all(test, feature = "iterative"))]
+mod iterative_tests {
+    use super::*;
+    use crate::sparse::TripletMatrix;
+    use approx::assert_relative_eq;
+
+    #[test]
+    fn test_iterative_solver_simple_spd() {
+        // Simple 2x2 SPD system: [4 2; 2 3] * [x; y] = [4; 5]
+        // Solution: x = 0.25, y = 1.5
+        let mut triplet = TripletMatrix::new(2, 2);
+        triplet.add(0, 0, 4.0);
+        triplet.add(0, 1, 2.0);
+        triplet.add(1, 0, 2.0);
+        triplet.add(1, 1, 3.0);
+
+        let matrix = triplet.to_csr();
+        let rhs = vec![4.0, 5.0];
+
+        let solver = IterativeSolver::with_amg();
+        let solution = solver.solve(&matrix, &rhs).unwrap();
+
+        assert_relative_eq!(solution[0], 0.25, epsilon = 1e-8);
+        assert_relative_eq!(solution[1], 1.5, epsilon = 1e-8);
+    }
+
+    #[test]
+    fn test_iterative_solver_jacobi() {
+        // Test with Jacobi preconditioner
+        let mut triplet = TripletMatrix::new(2, 2);
+        triplet.add(0, 0, 4.0);
+        triplet.add(0, 1, 2.0);
+        triplet.add(1, 0, 2.0);
+        triplet.add(1, 1, 3.0);
+
+        let matrix = triplet.to_csr();
+        let rhs = vec![4.0, 5.0];
+
+        let config = IterativeConfig {
+            preconditioner: PreconditionerType::Jacobi,
+            ..Default::default()
+        };
+        let solver = IterativeSolver::new(config);
+        let solution = solver.solve(&matrix, &rhs).unwrap();
+
+        assert_relative_eq!(solution[0], 0.25, epsilon = 1e-8);
+        assert_relative_eq!(solution[1], 1.5, epsilon = 1e-8);
+    }
+
+    #[test]
+    fn test_iterative_solver_identity() {
+        // Identity matrix: solution equals RHS
+        let mut triplet = TripletMatrix::new(4, 4);
+        for i in 0..4 {
+            triplet.add(i, i, 1.0);
+        }
+
+        let matrix = triplet.to_csr();
+        let rhs = vec![1.0, 2.0, 3.0, 4.0];
+
+        let solver = IterativeSolver::with_amg();
+        let solution = solver.solve(&matrix, &rhs).unwrap();
+
+        for i in 0..4 {
+            assert_relative_eq!(solution[i], rhs[i], epsilon = 1e-8);
+        }
+    }
+
+    #[test]
+    fn test_iterative_solver_diagonal() {
+        // Diagonal SPD matrix
+        let mut triplet = TripletMatrix::new(3, 3);
+        triplet.add(0, 0, 2.0);
+        triplet.add(1, 1, 3.0);
+        triplet.add(2, 2, 4.0);
+
+        let matrix = triplet.to_csr();
+        let rhs = vec![6.0, 9.0, 8.0];
+
+        let solver = IterativeSolver::with_amg();
+        let solution = solver.solve(&matrix, &rhs).unwrap();
+
+        assert_relative_eq!(solution[0], 3.0, epsilon = 1e-8);
+        assert_relative_eq!(solution[1], 3.0, epsilon = 1e-8);
+        assert_relative_eq!(solution[2], 2.0, epsilon = 1e-8);
+    }
+
+    #[test]
+    fn test_iterative_solver_empty() {
+        let triplet = TripletMatrix::new(0, 0);
+        let matrix = triplet.to_csr();
+        let rhs: Vec<f64> = vec![];
+
+        let solver = IterativeSolver::with_amg();
+        let solution = solver.solve(&matrix, &rhs).unwrap();
+
+        assert!(solution.is_empty());
+    }
+
+    #[test]
+    fn test_iterative_solver_rhs_mismatch() {
+        let mut triplet = TripletMatrix::new(2, 2);
+        triplet.add(0, 0, 1.0);
+        triplet.add(1, 1, 1.0);
+
+        let matrix = triplet.to_csr();
+        let rhs = vec![1.0, 2.0, 3.0]; // Wrong size
+
+        let solver = IterativeSolver::with_amg();
+        assert!(solver.solve(&matrix, &rhs).is_err());
+    }
+
+    #[test]
+    fn test_iterative_solver_fea_like_matrix() {
+        // A small FEA-like stiffness matrix (tridiagonal banded structure)
+        let n = 20;
+        let mut triplet = TripletMatrix::new(n, n);
+
+        // Diagonal dominance (required for SPD)
+        for i in 0..n {
+            triplet.add(i, i, 4.0);
+        }
+
+        // Off-diagonal coupling (symmetric)
+        for i in 0..(n - 1) {
+            triplet.add(i, i + 1, -1.0);
+            triplet.add(i + 1, i, -1.0);
+        }
+
+        let matrix = triplet.to_csr();
+        let rhs: Vec<f64> = (0..n).map(|i| if i == 0 || i == n - 1 { 1.0 } else { 0.0 }).collect();
+
+        let solver = IterativeSolver::with_amg();
+        let solution = solver.solve(&matrix, &rhs).unwrap();
+
+        // Verify solution by computing residual ||Ax - b||
+        assert!(solution.len() == n);
+        assert!(solution.iter().all(|&x| x.is_finite()));
+
+        let dense = nalgebra::DMatrix::from(&matrix);
+        let x_vec = nalgebra::DVector::from_vec(solution);
+        let b_vec = nalgebra::DVector::from_vec(rhs);
+        let residual = (&dense * &x_vec - &b_vec).norm();
+        // Iterative solver tolerances are looser than direct solvers
+        assert!(residual < 1e-4, "Residual too large: {}", residual);
+    }
+
+    #[test]
+    fn test_select_solver_iterative_for_large() {
+        let config = SolverConfig {
+            solver_type: SolverType::Auto,
+            auto_threshold: 10, // Very low threshold for testing
+            ..Default::default()
+        };
+
+        // Below threshold: direct solver
+        let solver_small = select_solver(&config, 5);
+        assert_eq!(solver_small.name(), "faer Sparse Cholesky (LLᵀ)");
+
+        // Above threshold: iterative solver
+        let solver_large = select_solver(&config, 100);
+        assert_eq!(solver_large.name(), "PCG with AMG (kryst)");
+    }
+
+    #[test]
+    fn test_select_solver_explicit_iterative() {
+        let config = SolverConfig {
+            solver_type: SolverType::Iterative,
+            ..Default::default()
+        };
+
+        let solver = select_solver(&config, 10);
+        assert_eq!(solver.name(), "PCG with AMG (kryst)");
+    }
+
+    #[test]
+    fn test_iterative_solver_name() {
+        let amg = IterativeSolver::with_amg();
+        assert_eq!(amg.name(), "PCG with AMG (kryst)");
+
+        let ilu = IterativeSolver::with_ilu0();
+        assert_eq!(ilu.name(), "PCG with ILU(0) (kryst)");
+
+        let jacobi = IterativeSolver::new(IterativeConfig {
+            preconditioner: PreconditionerType::Jacobi,
+            ..Default::default()
+        });
+        assert_eq!(jacobi.name(), "PCG with Jacobi (kryst)");
     }
 }

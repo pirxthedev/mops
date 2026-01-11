@@ -277,6 +277,29 @@ pub enum SolverError {
 - CHOLMOD: Multi-threaded via BLAS
 - hypre: Designed for MPI, but works single-process
 
+## Implementation Status (2026-01-11)
+
+### Completed
+
+1. **Direct solver (faer):** Production sparse Cholesky using faer library
+   - `FaerCholeskySolver`: One-shot solve
+   - `CachedCholeskySolver`: Reuses symbolic factorization
+
+2. **Iterative solver (kryst):** PCG with AMG preconditioning (requires `iterative` feature)
+   - `IterativeSolver`: Preconditioned Conjugate Gradient
+   - Preconditioners: AMG (default), ILU(0), Jacobi, None
+   - Configuration: rtol, atol, max_iterations
+
+3. **Solver auto-selection:** `select_solver()` chooses based on problem size
+   - < 100k DOFs: Direct (faer Cholesky)
+   - ≥ 100k DOFs: Iterative (PCG+AMG) if `iterative` feature enabled
+
+### Design Changes from Original Spec
+
+- Used **kryst** crate instead of hypre bindings (pure Rust, no FFI complexity)
+- Used **faer** instead of SuiteSparse CHOLMOD (pure Rust, no system deps)
+- Optional `iterative` feature flag keeps core dependency-light
+
 ## Open Questions
 
 1. **MKL vs OpenBLAS:** MKL faster but licensing complexity
@@ -287,4 +310,6 @@ pub enum SolverError {
 
 - SuiteSparse User Guide: https://github.com/DrTimothyAldenDavis/SuiteSparse
 - hypre Reference Manual: https://hypre.readthedocs.io/
+- kryst (Krylov solvers in Rust): https://github.com/tmathis720/kryst
+- faer (Linear algebra in Rust): https://github.com/sarah-ek/faer-rs
 - "Direct Methods for Sparse Linear Systems" - Tim Davis (2006)

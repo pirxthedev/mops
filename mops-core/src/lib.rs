@@ -32,6 +32,9 @@ pub use mesh::Mesh;
 pub use solver::{
     select_solver, CachedCholeskySolver, FaerCholeskySolver, Solver, SolverConfig, SolverType,
 };
+
+#[cfg(feature = "iterative")]
+pub use solver::{IterativeConfig, IterativeSolver, PreconditionerType};
 pub use sparse::CsrMatrix;
 pub use stress::{compute_nodal_stresses, recover_stresses, ElementStress, StressField};
 pub use types::{Point3, StrainTensor, StressTensor};

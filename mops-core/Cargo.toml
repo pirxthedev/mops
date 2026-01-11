@@ -18,6 +18,9 @@ faer = { workspace = true }
 # Sparse matrices
 sprs = { workspace = true }
 
+# Iterative solvers with preconditioning (optional)
+kryst = { workspace = true, optional = true }
+
 # Parallelism
 rayon = { workspace = true }
 
@@ -34,5 +37,7 @@ approx = { workspace = true }
 default = []
 # Enable HDF5 for results file I/O
 hdf5-io = ["dep:hdf5"]
+# Enable iterative solvers (PCG with AMG preconditioning)
+iterative = ["dep:kryst"]
 # Enable for Python bindings (used by mops-python)
 python = []

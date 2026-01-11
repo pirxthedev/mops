@@ -24,6 +24,9 @@ faer = "0.23"
 # Sparse matrices
 sprs = "0.11"
 
+# Iterative solvers with preconditioning
+kryst = { version = "3.2", default-features = false, features = ["rayon", "backend-faer"] }
+
 # Parallelism
 rayon = "1.10"
 
