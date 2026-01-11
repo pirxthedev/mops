@@ -952,9 +952,14 @@ fn element_stiffness<'py>(
         "tet4" => ElementType::Tet4,
         "tet10" => ElementType::Tet10,
         "hex8" => ElementType::Hex8,
+        "hex20" => ElementType::Hex20,
+        "tri3" => ElementType::Tri3,
+        "tri6" => ElementType::Tri6,
+        "quad4" => ElementType::Quad4,
+        "quad8" => ElementType::Quad8,
         _ => {
             return Err(PyValueError::new_err(format!(
-                "Unknown element type: {}. Valid types: tet4, tet10, hex8",
+                "Unknown element type: {}. Valid types: tet4, tet10, hex8, hex20, tri3, tri6, quad4, quad8",
                 element_type
             )))
         }
@@ -997,23 +1002,28 @@ fn element_stiffness<'py>(
         .map_err(|e| PyRuntimeError::new_err(format!("Failed to create array: {}", e)))
 }
 
-/// Compute element volume for a single element.
+/// Compute element volume (or area for 2D elements) for a single element.
 ///
 /// Args:
-///     element_type: Element type string ("tet4", "tet10", "hex8")
+///     element_type: Element type string ("tet4", "tet10", "hex8", "hex20", "tri3", "tri6", "quad4", "quad8")
 ///     nodes: Nx3 array of node coordinates for this element
 ///
 /// Returns:
-///     Element volume as a float
+///     Element volume (3D) or area (2D) as a float
 #[pyfunction]
 fn element_volume(element_type: &str, nodes: PyReadonlyArray2<f64>) -> PyResult<f64> {
     let elem_type = match element_type {
         "tet4" => ElementType::Tet4,
         "tet10" => ElementType::Tet10,
         "hex8" => ElementType::Hex8,
+        "hex20" => ElementType::Hex20,
+        "tri3" => ElementType::Tri3,
+        "tri6" => ElementType::Tri6,
+        "quad4" => ElementType::Quad4,
+        "quad8" => ElementType::Quad8,
         _ => {
             return Err(PyValueError::new_err(format!(
-                "Unknown element type: {}. Valid types: tet4, tet10, hex8",
+                "Unknown element type: {}. Valid types: tet4, tet10, hex8, hex20, tri3, tri6, quad4, quad8",
                 element_type
             )))
         }
@@ -1052,9 +1062,9 @@ fn element_volume(element_type: &str, nodes: PyReadonlyArray2<f64>) -> PyResult<
 /// given its nodal coordinates, nodal displacements, and material properties.
 ///
 /// Args:
-///     element_type: Element type string ("tet4", "tet10", "hex8")
+///     element_type: Element type string ("tet4", "tet10", "hex8", "hex20", "tri3", "tri6", "quad4", "quad8")
 ///     nodes: Nx3 array of node coordinates for this element
-///     displacements: Flat array of nodal displacements (N*3 elements: [u0, v0, w0, u1, v1, w1, ...])
+///     displacements: Flat array of nodal displacements (N*dofs_per_node elements)
 ///     material: Material properties
 ///
 /// Returns:
@@ -1072,9 +1082,14 @@ fn compute_element_stress<'py>(
         "tet4" => ElementType::Tet4,
         "tet10" => ElementType::Tet10,
         "hex8" => ElementType::Hex8,
+        "hex20" => ElementType::Hex20,
+        "tri3" => ElementType::Tri3,
+        "tri6" => ElementType::Tri6,
+        "quad4" => ElementType::Quad4,
+        "quad8" => ElementType::Quad8,
         _ => {
             return Err(PyValueError::new_err(format!(
-                "Unknown element type: {}. Valid types: tet4, tet10, hex8",
+                "Unknown element type: {}. Valid types: tet4, tet10, hex8, hex20, tri3, tri6, quad4, quad8",
                 element_type
             )))
         }
@@ -1082,7 +1097,7 @@ fn compute_element_stress<'py>(
 
     let nodes_shape = nodes.shape();
     let expected_nodes = elem_type.n_nodes();
-    let expected_dofs = expected_nodes * 3;
+    let expected_dofs = expected_nodes * elem_type.dofs_per_node();
 
     if nodes_shape.len() != 2 || nodes_shape[0] != expected_nodes || nodes_shape[1] != 3 {
         return Err(PyValueError::new_err(format!(
