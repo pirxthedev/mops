@@ -1,0 +1,162 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  # Rust linting with rustfmt and clippy
+  rust-lint:
+    name: Rust Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-lint-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-lint-
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run clippy
+        run: cargo clippy --all-targets -- -W clippy::all
+
+  # Rust unit tests
+  rust-test:
+    name: Rust Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-test-
+
+      - name: Build mops-core
+        run: cargo build --package mops-core --release
+
+      - name: Run tests
+        run: cargo test --package mops-core --release
+
+  # Python build and test
+  python-test:
+    name: Python Test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-python-${{ matrix.python-version }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-python-${{ matrix.python-version }}-
+
+      - name: Install maturin
+        run: pip install maturin
+
+      - name: Build Python package
+        working-directory: mops-python
+        run: maturin build --release
+
+      - name: Install package and test dependencies
+        working-directory: mops-python
+        run: |
+          pip install target/wheels/*.whl
+          pip install pytest pytest-cov numpy
+
+      - name: Run unit tests
+        working-directory: mops-python
+        run: pytest tests/unit -v
+
+      - name: Run integration tests
+        working-directory: mops-python
+        run: pytest tests/integration -v
+
+  # Verification tests (NAFEMS benchmarks) - run on main only
+  verification:
+    name: Verification Tests
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-verification-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-verification-
+
+      - name: Install maturin
+        run: pip install maturin
+
+      - name: Build Python package
+        working-directory: mops-python
+        run: maturin build --release
+
+      - name: Install package and test dependencies
+        working-directory: mops-python
+        run: |
+          pip install target/wheels/*.whl
+          pip install pytest numpy
+
+      - name: Run verification tests
+        working-directory: mops-python
+        run: pytest tests/verification -v --tb=long
