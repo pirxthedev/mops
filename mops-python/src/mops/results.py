@@ -3,9 +3,13 @@
 This module provides the Results class for storing and persisting FEA analysis results.
 Results can be saved to HDF5 format for efficient storage and lazy loading of large datasets.
 
+The module also provides query-optimized field accessors (NodeField, ElementField) that
+allow selective data access using the Query DSL, enabling efficient partial reads from
+HDF5 files.
+
 Example::
 
-    from mops import Model, solve
+    from mops import Model, solve, Nodes, Elements
 
     # Solve model
     results = solve(model)
@@ -17,6 +21,10 @@ Example::
     loaded = Results.load("analysis.mops.h5")
     print(loaded.max_displacement())
 
+    # Query-optimized access - only reads selected data from HDF5
+    fixed_disp = loaded.displacement_field.where(Nodes.where(x=0))
+    tip_stress = loaded.stress_field.where(Elements.touching(Nodes.where(x=100)))
+
     # Close when done
     loaded.close()
 
@@ -27,9 +35,10 @@ Example::
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Generic, TypeVar
 
 import numpy as np
 from numpy.typing import NDArray
@@ -39,9 +48,784 @@ import mops
 if TYPE_CHECKING:
     from mops._core import Results as CoreResults
     from mops.model import Model
+    from mops.query import Query, NodeQuery, ElementQuery
 
 # HDF5 format version
 FORMAT_VERSION = "1.0"
+
+# Type variable for field data
+T = TypeVar("T", bound=np.ndarray)
+
+
+class FieldAccessor(ABC, Generic[T]):
+    """Base class for query-optimized field access.
+
+    Field accessors provide lazy, query-aware access to result data. When
+    backed by HDF5, they enable partial reads to minimize memory usage.
+
+    The key methods are:
+    - __getitem__(query): Get values for selected indices
+    - where(query): Return a filtered field (lazy evaluation)
+    - values(): Get full array (triggers load if lazy)
+    """
+
+    @abstractmethod
+    def values(self) -> T:
+        """Get the full field data as a numpy array."""
+        ...
+
+    @abstractmethod
+    def __getitem__(self, query: "Query") -> np.ndarray:
+        """Get field values for indices selected by query."""
+        ...
+
+    @abstractmethod
+    def where(self, query: "Query") -> "FieldAccessor[T]":
+        """Return a filtered field accessor (lazy evaluation)."""
+        ...
+
+
+class NodeField(FieldAccessor[NDArray[np.float64]]):
+    """Query-optimized accessor for nodal field data (e.g., displacement).
+
+    Provides efficient access to per-node result data using the Query DSL.
+    When backed by HDF5, only reads the requested subset of data.
+
+    Example::
+
+        # Get displacement at specific nodes
+        tip_disp = results.displacement_field[Nodes.where(x=100)]
+
+        # Get filtered field (lazy - no data read yet)
+        filtered = results.displacement_field.where(Nodes.where(x=0))
+        data = filtered.values()  # Now reads from HDF5
+
+        # Convenience methods
+        mag = results.displacement_field.magnitude()  # Returns ScalarNodeField
+    """
+
+    def __init__(
+        self,
+        data: NDArray[np.float64] | None = None,
+        *,
+        h5file: object | None = None,
+        h5path: str | None = None,
+        mesh_h5path: str = "/mesh/nodes",
+        indices: NDArray[np.int64] | None = None,
+        parent: "NodeField | None" = None,
+        components: dict[str, "Query"] | None = None,
+    ) -> None:
+        """Initialize NodeField.
+
+        Args:
+            data: Direct array data (for non-lazy access).
+            h5file: HDF5 file handle for lazy loading.
+            h5path: Path to dataset in HDF5 file.
+            mesh_h5path: Path to mesh nodes in HDF5 (for query evaluation).
+            indices: Pre-selected indices (for filtered fields).
+            parent: Parent field (for filtered fields that inherit HDF5 refs).
+            components: Named components for query resolution.
+        """
+        self._data = data
+        self._h5file = h5file
+        self._h5path = h5path
+        self._mesh_h5path = mesh_h5path
+        self._indices = indices
+        self._parent = parent
+        self._components = components or {}
+        self._cache: NDArray[np.float64] | None = None
+
+    def values(self) -> NDArray[np.float64]:
+        """Get the full field data as a numpy array.
+
+        For filtered fields, returns only the selected values.
+        For HDF5-backed fields, triggers a read operation.
+
+        Returns:
+            Array of field values. Shape depends on whether filtered.
+        """
+        if self._cache is not None:
+            return self._cache
+
+        if self._data is not None:
+            # In-memory data
+            if self._indices is not None:
+                self._cache = self._data[self._indices]
+            else:
+                self._cache = self._data
+            return self._cache
+
+        if self._parent is not None:
+            # Filtered field - delegate to parent
+            parent_data = self._parent.values()
+            if self._indices is not None:
+                self._cache = parent_data[self._indices]
+            else:
+                self._cache = parent_data
+            return self._cache
+
+        if self._h5file is not None and self._h5path is not None:
+            # HDF5 lazy loading
+            if self._indices is not None:
+                # Optimized partial read - HDF5 fancy indexing
+                # Sort indices for efficient read, then reorder
+                sorted_idx = np.argsort(self._indices)
+                sorted_indices = self._indices[sorted_idx]
+                # Read sorted subset
+                data = self._h5file[self._h5path][sorted_indices]
+                # Restore original order
+                inverse_idx = np.empty_like(sorted_idx)
+                inverse_idx[sorted_idx] = np.arange(len(sorted_idx))
+                self._cache = data[inverse_idx]
+            else:
+                self._cache = self._h5file[self._h5path][:]
+            return self._cache
+
+        raise RuntimeError("NodeField not initialized with data source")
+
+    def __getitem__(self, query: "Query") -> np.ndarray:
+        """Get field values for indices selected by query.
+
+        Args:
+            query: Node query to select indices.
+
+        Returns:
+            Array of values at selected nodes.
+        """
+        indices = self._evaluate_query(query)
+        if self._indices is not None:
+            # Already filtered - need to map indices
+            # Find intersection of current indices with query result
+            mask = np.isin(self._indices, indices)
+            return self.values()[mask]
+        return self._get_by_indices(indices)
+
+    def _get_by_indices(self, indices: np.ndarray) -> np.ndarray:
+        """Get values at specific indices, optimized for HDF5."""
+        if len(indices) == 0:
+            # Return empty array with correct shape
+            full = self.values()
+            return np.empty((0,) + full.shape[1:], dtype=full.dtype)
+
+        if self._h5file is not None and self._h5path is not None and self._data is None:
+            # Direct HDF5 read for subset
+            sorted_idx = np.argsort(indices)
+            sorted_indices = indices[sorted_idx]
+            data = self._h5file[self._h5path][sorted_indices]
+            inverse_idx = np.empty_like(sorted_idx)
+            inverse_idx[sorted_idx] = np.arange(len(sorted_idx))
+            return data[inverse_idx]
+
+        # In-memory
+        return self.values()[indices]
+
+    def where(self, query: "Query") -> "NodeField":
+        """Return a filtered NodeField (lazy evaluation).
+
+        The query is evaluated against mesh data (from HDF5 or memory)
+        to determine which indices to include. No result data is read
+        until values() is called.
+
+        Args:
+            query: Node query to filter by.
+
+        Returns:
+            New NodeField that will return only selected values.
+
+        Example::
+
+            # Define a filter
+            filtered = results.displacement_field.where(Nodes.where(x=0))
+
+            # Data not read yet - just indices computed
+            data = filtered.values()  # Now reads subset from HDF5
+        """
+        indices = self._evaluate_query(query)
+
+        if self._indices is not None:
+            # Already filtered - intersect with new selection
+            mask = np.isin(self._indices, indices)
+            new_indices = self._indices[mask]
+        else:
+            new_indices = indices
+
+        return NodeField(
+            data=self._data,
+            h5file=self._h5file,
+            h5path=self._h5path,
+            mesh_h5path=self._mesh_h5path,
+            indices=new_indices,
+            parent=self if self._data is None else None,
+            components=self._components,
+        )
+
+    def _evaluate_query(self, query: "Query") -> np.ndarray:
+        """Evaluate a query to get node indices."""
+        from mops.query import NodeQuery
+
+        if not isinstance(query, NodeQuery):
+            raise TypeError(
+                f"NodeField requires NodeQuery, got {type(query).__name__}. "
+                "Use Elements.* queries for ElementField."
+            )
+
+        # Build a minimal mesh-like object for query evaluation
+        mesh = self._get_mesh_proxy()
+        return query.evaluate(mesh, self._components)
+
+    def _get_mesh_proxy(self) -> object:
+        """Get mesh data for query evaluation."""
+        if self._h5file is not None and self._mesh_h5path in self._h5file:
+            # Create a proxy that provides coords from HDF5
+            return _HDF5MeshProxy(self._h5file, self._mesh_h5path)
+
+        raise RuntimeError(
+            "Cannot evaluate query: no mesh data available. "
+            "Results must be saved with model=model to enable queries."
+        )
+
+    def magnitude(self) -> "ScalarNodeField":
+        """Compute magnitude of vector field (e.g., displacement magnitude).
+
+        Returns:
+            ScalarNodeField containing magnitude at each node.
+        """
+        data = self.values()
+        if data.ndim != 2 or data.shape[1] < 2:
+            raise ValueError("magnitude() requires vector field (shape Nx2 or Nx3)")
+        mag = np.linalg.norm(data, axis=1)
+        return ScalarNodeField(
+            data=mag,
+            indices=self._indices,
+            components=self._components,
+        )
+
+    @property
+    def shape(self) -> tuple[int, ...]:
+        """Shape of the field data."""
+        if self._indices is not None:
+            # Filtered
+            full_shape = self._get_full_shape()
+            return (len(self._indices),) + full_shape[1:]
+        return self._get_full_shape()
+
+    def _get_full_shape(self) -> tuple[int, ...]:
+        """Get shape of unfiltered data."""
+        if self._data is not None:
+            return self._data.shape
+        if self._h5file is not None and self._h5path is not None:
+            return self._h5file[self._h5path].shape
+        if self._cache is not None:
+            return self._cache.shape
+        raise RuntimeError("Cannot determine shape: no data source")
+
+    def __repr__(self) -> str:
+        filtered = " (filtered)" if self._indices is not None else ""
+        lazy = " [lazy]" if self._h5file is not None and self._cache is None else ""
+        return f"NodeField(shape={self.shape}{filtered}{lazy})"
+
+
+class ScalarNodeField(FieldAccessor[NDArray[np.float64]]):
+    """Scalar field on nodes (e.g., displacement magnitude, temperature).
+
+    A simplified accessor for scalar per-node data. Supports aggregation
+    methods like max(), min(), mean().
+    """
+
+    def __init__(
+        self,
+        data: NDArray[np.float64],
+        *,
+        indices: NDArray[np.int64] | None = None,
+        components: dict[str, "Query"] | None = None,
+    ) -> None:
+        """Initialize ScalarNodeField.
+
+        Args:
+            data: 1D array of scalar values per node.
+            indices: Pre-selected indices (for filtered fields).
+            components: Named components for query resolution.
+        """
+        self._data = data
+        self._indices = indices
+        self._components = components or {}
+
+    def values(self) -> NDArray[np.float64]:
+        """Get the scalar values as a 1D array."""
+        if self._indices is not None:
+            return self._data[self._indices]
+        return self._data
+
+    def __getitem__(self, query: "Query") -> np.ndarray:
+        """Get values for nodes selected by query."""
+        from mops.query import NodeQuery
+
+        if not isinstance(query, NodeQuery):
+            raise TypeError(f"ScalarNodeField requires NodeQuery, got {type(query).__name__}")
+
+        # For scalar fields derived from other fields, we work on in-memory data
+        raise NotImplementedError(
+            "Query-based access on derived scalar fields not yet supported. "
+            "Use .values() to get the array."
+        )
+
+    def where(self, query: "Query") -> "ScalarNodeField":
+        """Filter to specific nodes."""
+        raise NotImplementedError(
+            "where() on derived scalar fields not yet supported. "
+            "Filter the parent field first."
+        )
+
+    def max(self) -> float:
+        """Maximum value across all (selected) nodes."""
+        return float(np.max(self.values()))
+
+    def min(self) -> float:
+        """Minimum value across all (selected) nodes."""
+        return float(np.min(self.values()))
+
+    def mean(self) -> float:
+        """Mean value across all (selected) nodes."""
+        return float(np.mean(self.values()))
+
+    def argmax(self) -> int:
+        """Index of maximum value."""
+        return int(np.argmax(self.values()))
+
+    def argmin(self) -> int:
+        """Index of minimum value."""
+        return int(np.argmin(self.values()))
+
+    def __repr__(self) -> str:
+        filtered = " (filtered)" if self._indices is not None else ""
+        n = len(self._indices) if self._indices is not None else len(self._data)
+        return f"ScalarNodeField(n={n}{filtered})"
+
+
+class ElementField(FieldAccessor[NDArray[np.float64]]):
+    """Query-optimized accessor for element field data (e.g., stress).
+
+    Provides efficient access to per-element result data using the Query DSL.
+    When backed by HDF5, only reads the requested subset of data.
+
+    Example::
+
+        # Get stress at specific elements
+        tip_stress = results.stress_field[Elements.touching(Nodes.where(x=100))]
+
+        # Get filtered field (lazy)
+        filtered = results.stress_field.where(Elements.all())
+        data = filtered.values()
+
+        # Von Mises stress
+        vm = results.von_mises_field.max()
+    """
+
+    def __init__(
+        self,
+        data: NDArray[np.float64] | None = None,
+        *,
+        h5file: object | None = None,
+        h5path: str | None = None,
+        mesh_nodes_h5path: str = "/mesh/nodes",
+        mesh_elements_h5path: str = "/mesh/elements",
+        indices: NDArray[np.int64] | None = None,
+        parent: "ElementField | None" = None,
+        components: dict[str, "Query"] | None = None,
+    ) -> None:
+        """Initialize ElementField.
+
+        Args:
+            data: Direct array data (for non-lazy access).
+            h5file: HDF5 file handle for lazy loading.
+            h5path: Path to dataset in HDF5 file.
+            mesh_nodes_h5path: Path to mesh nodes in HDF5.
+            mesh_elements_h5path: Path to mesh elements in HDF5.
+            indices: Pre-selected indices (for filtered fields).
+            parent: Parent field (for filtered fields).
+            components: Named components for query resolution.
+        """
+        self._data = data
+        self._h5file = h5file
+        self._h5path = h5path
+        self._mesh_nodes_h5path = mesh_nodes_h5path
+        self._mesh_elements_h5path = mesh_elements_h5path
+        self._indices = indices
+        self._parent = parent
+        self._components = components or {}
+        self._cache: NDArray[np.float64] | None = None
+
+    def values(self) -> NDArray[np.float64]:
+        """Get the full field data as a numpy array."""
+        if self._cache is not None:
+            return self._cache
+
+        if self._data is not None:
+            if self._indices is not None:
+                self._cache = self._data[self._indices]
+            else:
+                self._cache = self._data
+            return self._cache
+
+        if self._parent is not None:
+            parent_data = self._parent.values()
+            if self._indices is not None:
+                self._cache = parent_data[self._indices]
+            else:
+                self._cache = parent_data
+            return self._cache
+
+        if self._h5file is not None and self._h5path is not None:
+            if self._indices is not None:
+                sorted_idx = np.argsort(self._indices)
+                sorted_indices = self._indices[sorted_idx]
+                data = self._h5file[self._h5path][sorted_indices]
+                inverse_idx = np.empty_like(sorted_idx)
+                inverse_idx[sorted_idx] = np.arange(len(sorted_idx))
+                self._cache = data[inverse_idx]
+            else:
+                self._cache = self._h5file[self._h5path][:]
+            return self._cache
+
+        raise RuntimeError("ElementField not initialized with data source")
+
+    def __getitem__(self, query: "Query") -> np.ndarray:
+        """Get field values for indices selected by query."""
+        indices = self._evaluate_query(query)
+        if self._indices is not None:
+            mask = np.isin(self._indices, indices)
+            return self.values()[mask]
+        return self._get_by_indices(indices)
+
+    def _get_by_indices(self, indices: np.ndarray) -> np.ndarray:
+        """Get values at specific indices, optimized for HDF5."""
+        if len(indices) == 0:
+            full = self.values()
+            return np.empty((0,) + full.shape[1:], dtype=full.dtype)
+
+        if self._h5file is not None and self._h5path is not None and self._data is None:
+            sorted_idx = np.argsort(indices)
+            sorted_indices = indices[sorted_idx]
+            data = self._h5file[self._h5path][sorted_indices]
+            inverse_idx = np.empty_like(sorted_idx)
+            inverse_idx[sorted_idx] = np.arange(len(sorted_idx))
+            return data[inverse_idx]
+
+        return self.values()[indices]
+
+    def where(self, query: "Query") -> "ElementField":
+        """Return a filtered ElementField (lazy evaluation)."""
+        indices = self._evaluate_query(query)
+
+        if self._indices is not None:
+            mask = np.isin(self._indices, indices)
+            new_indices = self._indices[mask]
+        else:
+            new_indices = indices
+
+        return ElementField(
+            data=self._data,
+            h5file=self._h5file,
+            h5path=self._h5path,
+            mesh_nodes_h5path=self._mesh_nodes_h5path,
+            mesh_elements_h5path=self._mesh_elements_h5path,
+            indices=new_indices,
+            parent=self if self._data is None else None,
+            components=self._components,
+        )
+
+    def _evaluate_query(self, query: "Query") -> np.ndarray:
+        """Evaluate a query to get element indices."""
+        from mops.query import ElementQuery
+
+        if not isinstance(query, ElementQuery):
+            raise TypeError(
+                f"ElementField requires ElementQuery, got {type(query).__name__}. "
+                "Use Nodes.* queries for NodeField."
+            )
+
+        mesh = self._get_mesh_proxy()
+        return query.evaluate(mesh, self._components)
+
+    def _get_mesh_proxy(self) -> object:
+        """Get mesh data for query evaluation."""
+        if self._h5file is not None:
+            if self._mesh_nodes_h5path in self._h5file:
+                return _HDF5MeshProxy(
+                    self._h5file,
+                    self._mesh_nodes_h5path,
+                    self._mesh_elements_h5path,
+                )
+
+        raise RuntimeError(
+            "Cannot evaluate query: no mesh data available. "
+            "Results must be saved with model=model to enable queries."
+        )
+
+    @property
+    def shape(self) -> tuple[int, ...]:
+        """Shape of the field data."""
+        if self._indices is not None:
+            full_shape = self._get_full_shape()
+            return (len(self._indices),) + full_shape[1:]
+        return self._get_full_shape()
+
+    def _get_full_shape(self) -> tuple[int, ...]:
+        """Get shape of unfiltered data."""
+        if self._data is not None:
+            return self._data.shape
+        if self._h5file is not None and self._h5path is not None:
+            return self._h5file[self._h5path].shape
+        if self._cache is not None:
+            return self._cache.shape
+        raise RuntimeError("Cannot determine shape: no data source")
+
+    def max(self) -> float:
+        """Maximum value (for scalar fields) or max norm (for vector/tensor)."""
+        data = self.values()
+        if data.ndim == 1:
+            return float(np.max(data))
+        return float(np.max(np.linalg.norm(data, axis=1)))
+
+    def min(self) -> float:
+        """Minimum value (for scalar fields) or min norm (for vector/tensor)."""
+        data = self.values()
+        if data.ndim == 1:
+            return float(np.min(data))
+        return float(np.min(np.linalg.norm(data, axis=1)))
+
+    def mean(self) -> float:
+        """Mean value (for scalar fields) or mean norm (for vector/tensor)."""
+        data = self.values()
+        if data.ndim == 1:
+            return float(np.mean(data))
+        return float(np.mean(np.linalg.norm(data, axis=1)))
+
+    def __repr__(self) -> str:
+        filtered = " (filtered)" if self._indices is not None else ""
+        lazy = " [lazy]" if self._h5file is not None and self._cache is None else ""
+        return f"ElementField(shape={self.shape}{filtered}{lazy})"
+
+
+class ScalarElementField(FieldAccessor[NDArray[np.float64]]):
+    """Scalar field on elements (e.g., von Mises stress).
+
+    A simplified accessor for scalar per-element data with aggregation methods.
+    """
+
+    def __init__(
+        self,
+        data: NDArray[np.float64] | None = None,
+        *,
+        h5file: object | None = None,
+        h5path: str | None = None,
+        mesh_nodes_h5path: str = "/mesh/nodes",
+        mesh_elements_h5path: str = "/mesh/elements",
+        indices: NDArray[np.int64] | None = None,
+        components: dict[str, "Query"] | None = None,
+    ) -> None:
+        """Initialize ScalarElementField."""
+        self._data = data
+        self._h5file = h5file
+        self._h5path = h5path
+        self._mesh_nodes_h5path = mesh_nodes_h5path
+        self._mesh_elements_h5path = mesh_elements_h5path
+        self._indices = indices
+        self._components = components or {}
+        self._cache: NDArray[np.float64] | None = None
+
+    def values(self) -> NDArray[np.float64]:
+        """Get the scalar values as a 1D array."""
+        if self._cache is not None:
+            return self._cache
+
+        if self._data is not None:
+            if self._indices is not None:
+                self._cache = self._data[self._indices]
+            else:
+                self._cache = self._data
+            return self._cache
+
+        if self._h5file is not None and self._h5path is not None:
+            if self._indices is not None:
+                sorted_idx = np.argsort(self._indices)
+                sorted_indices = self._indices[sorted_idx]
+                data = self._h5file[self._h5path][sorted_indices]
+                inverse_idx = np.empty_like(sorted_idx)
+                inverse_idx[sorted_idx] = np.arange(len(sorted_idx))
+                self._cache = data[inverse_idx]
+            else:
+                self._cache = self._h5file[self._h5path][:]
+            return self._cache
+
+        raise RuntimeError("ScalarElementField not initialized with data source")
+
+    def __getitem__(self, query: "Query") -> np.ndarray:
+        """Get values for elements selected by query."""
+        indices = self._evaluate_query(query)
+        if self._indices is not None:
+            mask = np.isin(self._indices, indices)
+            return self.values()[mask]
+        return self._get_by_indices(indices)
+
+    def _get_by_indices(self, indices: np.ndarray) -> np.ndarray:
+        """Get values at specific indices."""
+        if len(indices) == 0:
+            return np.empty(0, dtype=np.float64)
+
+        if self._h5file is not None and self._h5path is not None and self._data is None:
+            sorted_idx = np.argsort(indices)
+            sorted_indices = indices[sorted_idx]
+            data = self._h5file[self._h5path][sorted_indices]
+            inverse_idx = np.empty_like(sorted_idx)
+            inverse_idx[sorted_idx] = np.arange(len(sorted_idx))
+            return data[inverse_idx]
+
+        return self.values()[indices]
+
+    def _evaluate_query(self, query: "Query") -> np.ndarray:
+        """Evaluate a query to get element indices."""
+        from mops.query import ElementQuery
+
+        if not isinstance(query, ElementQuery):
+            raise TypeError(
+                f"ScalarElementField requires ElementQuery, got {type(query).__name__}"
+            )
+
+        mesh = self._get_mesh_proxy()
+        return query.evaluate(mesh, self._components)
+
+    def _get_mesh_proxy(self) -> object:
+        """Get mesh data for query evaluation."""
+        if self._h5file is not None:
+            if self._mesh_nodes_h5path in self._h5file:
+                return _HDF5MeshProxy(
+                    self._h5file,
+                    self._mesh_nodes_h5path,
+                    self._mesh_elements_h5path,
+                )
+
+        raise RuntimeError(
+            "Cannot evaluate query: no mesh data available. "
+            "Results must be saved with model=model to enable queries."
+        )
+
+    def where(self, query: "Query") -> "ScalarElementField":
+        """Return a filtered ScalarElementField."""
+        indices = self._evaluate_query(query)
+
+        if self._indices is not None:
+            mask = np.isin(self._indices, indices)
+            new_indices = self._indices[mask]
+        else:
+            new_indices = indices
+
+        return ScalarElementField(
+            data=self._data,
+            h5file=self._h5file,
+            h5path=self._h5path,
+            mesh_nodes_h5path=self._mesh_nodes_h5path,
+            mesh_elements_h5path=self._mesh_elements_h5path,
+            indices=new_indices,
+            components=self._components,
+        )
+
+    def max(self) -> float:
+        """Maximum value across all (selected) elements."""
+        return float(np.max(self.values()))
+
+    def min(self) -> float:
+        """Minimum value across all (selected) elements."""
+        return float(np.min(self.values()))
+
+    def mean(self) -> float:
+        """Mean value across all (selected) elements."""
+        return float(np.mean(self.values()))
+
+    def argmax(self) -> int:
+        """Index of maximum value."""
+        return int(np.argmax(self.values()))
+
+    def argmin(self) -> int:
+        """Index of minimum value."""
+        return int(np.argmin(self.values()))
+
+    @property
+    def shape(self) -> tuple[int, ...]:
+        """Shape of the field data."""
+        if self._indices is not None:
+            return (len(self._indices),)
+        return self._get_full_shape()
+
+    def _get_full_shape(self) -> tuple[int, ...]:
+        """Get shape of unfiltered data."""
+        if self._data is not None:
+            return self._data.shape
+        if self._h5file is not None and self._h5path is not None:
+            return self._h5file[self._h5path].shape
+        if self._cache is not None:
+            return self._cache.shape
+        raise RuntimeError("Cannot determine shape: no data source")
+
+    def __repr__(self) -> str:
+        filtered = " (filtered)" if self._indices is not None else ""
+        lazy = " [lazy]" if self._h5file is not None and self._cache is None else ""
+        n = len(self._indices) if self._indices is not None else self.shape[0]
+        return f"ScalarElementField(n={n}{filtered}{lazy})"
+
+
+class _HDF5MeshProxy:
+    """Minimal mesh-like proxy for query evaluation against HDF5 data.
+
+    Provides the interface expected by Query.evaluate() using HDF5 datasets.
+    """
+
+    def __init__(
+        self,
+        h5file: object,
+        nodes_path: str,
+        elements_path: str | None = None,
+    ) -> None:
+        """Initialize proxy.
+
+        Args:
+            h5file: Open h5py.File handle.
+            nodes_path: HDF5 path to nodes dataset.
+            elements_path: HDF5 path to elements dataset (optional).
+        """
+        self._h5file = h5file
+        self._nodes_path = nodes_path
+        self._elements_path = elements_path
+        self._coords_cache: np.ndarray | None = None
+        self._elements_cache: np.ndarray | None = None
+
+    @property
+    def n_nodes(self) -> int:
+        """Number of nodes."""
+        return self._h5file[self._nodes_path].shape[0]
+
+    @property
+    def n_elements(self) -> int:
+        """Number of elements."""
+        if self._elements_path is None:
+            raise RuntimeError("Elements path not set")
+        return self._h5file[self._elements_path].shape[0]
+
+    @property
+    def coords(self) -> np.ndarray:
+        """Node coordinates (loaded on first access)."""
+        if self._coords_cache is None:
+            self._coords_cache = self._h5file[self._nodes_path][:]
+        return self._coords_cache
+
+    @property
+    def elements(self) -> np.ndarray:
+        """Element connectivity (loaded on first access)."""
+        if self._elements_path is None:
+            raise RuntimeError("Elements path not set")
+        if self._elements_cache is None:
+            self._elements_cache = self._h5file[self._elements_path][:]
+        return self._elements_cache
 
 
 class Results:
@@ -158,6 +942,102 @@ class Results:
     def created_at(self) -> str | None:
         """ISO 8601 timestamp when results were created."""
         return self._created_at
+
+    # =========================================================================
+    # Query-Optimized Field Accessors
+    # =========================================================================
+
+    @property
+    def displacement_field(self) -> NodeField:
+        """Query-optimized accessor for displacement field.
+
+        Returns a NodeField that supports the Query DSL for efficient
+        partial access to displacement data.
+
+        Example::
+
+            # Get displacement at fixed boundary
+            fixed_disp = results.displacement_field.where(Nodes.where(x=0))
+
+            # Direct indexing with query
+            tip_disp = results.displacement_field[Nodes.where(x=100)]
+
+            # Magnitude
+            mag = results.displacement_field.magnitude()
+        """
+        if self._lazy and self._h5file is not None:
+            # HDF5 lazy loading mode
+            return NodeField(
+                h5file=self._h5file,
+                h5path="/solution/displacement",
+                mesh_h5path="/mesh/nodes",
+            )
+
+        if self._core is not None:
+            # In-memory mode
+            return NodeField(data=self.displacement())
+
+        raise RuntimeError("Results not initialized")
+
+    @property
+    def stress_field(self) -> ElementField:
+        """Query-optimized accessor for stress tensor field.
+
+        Returns an ElementField that supports the Query DSL for efficient
+        partial access to stress data.
+
+        Example::
+
+            # Get stress at tip elements
+            tip_stress = results.stress_field.where(
+                Elements.touching(Nodes.where(x=100))
+            )
+
+            # Direct indexing with query
+            fixed_stress = results.stress_field[Elements.attached_to(Nodes.where(x=0))]
+        """
+        if self._lazy and self._h5file is not None:
+            return ElementField(
+                h5file=self._h5file,
+                h5path="/stress/element",
+                mesh_nodes_h5path="/mesh/nodes",
+                mesh_elements_h5path="/mesh/elements",
+            )
+
+        if self._core is not None:
+            return ElementField(data=self.stress())
+
+        raise RuntimeError("Results not initialized")
+
+    @property
+    def von_mises_field(self) -> ScalarElementField:
+        """Query-optimized accessor for von Mises stress field.
+
+        Returns a ScalarElementField that supports the Query DSL for efficient
+        partial access and aggregation operations.
+
+        Example::
+
+            # Max von Mises at tip
+            tip_vm = results.von_mises_field.where(
+                Elements.touching(Nodes.where(x=100))
+            ).max()
+
+            # Direct indexing
+            fixed_vm = results.von_mises_field[Elements.attached_to(Nodes.where(x=0))]
+        """
+        if self._lazy and self._h5file is not None:
+            return ScalarElementField(
+                h5file=self._h5file,
+                h5path="/stress/element_von_mises",
+                mesh_nodes_h5path="/mesh/nodes",
+                mesh_elements_h5path="/mesh/elements",
+            )
+
+        if self._core is not None:
+            return ScalarElementField(data=self.von_mises())
+
+        raise RuntimeError("Results not initialized")
 
     def displacement(self) -> NDArray[np.float64]:
         """Get nodal displacements.
