@@ -1,0 +1,20 @@
+[package]
+name = "mops-python"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Python bindings for MOPS FEA solver"
+
+[lib]
+name = "_core"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.23", features = ["extension-module"] }
+numpy = "0.23"
+mops-core = { path = "../../mops-core" }
+nalgebra = "0.33"
+thiserror = "2.0"
+
+[features]
+default = []

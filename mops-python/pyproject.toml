@@ -1,0 +1,75 @@
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "mops"
+version = "0.1.0"
+description = "Modular Open Physics Solver - High-performance FEA"
+readme = "README.md"
+license = { text = "MIT OR Apache-2.0" }
+requires-python = ">=3.10"
+authors = [
+    { name = "MOPS Contributors" }
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Rust",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+keywords = ["fea", "finite-element", "simulation", "structural-analysis"]
+dependencies = [
+    "numpy>=1.20",
+]
+
+[project.optional-dependencies]
+meshing = ["gmsh>=4.0"]
+visualization = ["pyvista>=0.40"]
+hdf5 = ["h5py>=3.0"]
+all = [
+    "gmsh>=4.0",
+    "pyvista>=0.40",
+    "h5py>=3.0",
+]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "mypy>=1.0",
+    "ruff>=0.1",
+]
+
+[project.urls]
+Homepage = "https://github.com/mops-fea/mops"
+Repository = "https://github.com/mops-fea/mops"
+Documentation = "https://mops-fea.github.io/mops"
+
+[tool.maturin]
+python-source = "src"
+module-name = "mops._core"
+features = ["pyo3/extension-module"]
+manifest-path = "rust/Cargo.toml"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP", "B", "C4", "SIM"]
