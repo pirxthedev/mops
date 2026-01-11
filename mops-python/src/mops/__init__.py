@@ -29,24 +29,59 @@ Example usage::
 
 from mops._core import (
     Material,
-    Mesh,
+    Mesh as _CoreMesh,
     Results,
     SolverConfig,
     compute_element_stress,
     element_stiffness,
     element_volume,
-    solve_simple,
+    solve_simple as _solve_simple,
     solver_info,
     version,
 )
+from mops.mesh import Mesh, MeshError
 from mops.model import Model
 from mops.loads import Force, Pressure, Moment
 from mops.query import Nodes, Elements, Faces
 
+
+def _unwrap_mesh(mesh):
+    """Unwrap Python Mesh wrapper to get the underlying Rust mesh."""
+    if hasattr(mesh, "_inner"):
+        return mesh._inner
+    return mesh
+
+
+def solve_simple(mesh, material, constrained_nodes, loaded_nodes, load_vector, config=None):
+    """Solve a simple FEA problem.
+
+    This is a convenience function for testing the solver pipeline.
+
+    Args:
+        mesh: Mesh object (either Python Mesh wrapper or core Mesh).
+        material: Material properties.
+        constrained_nodes: Array of node indices to constrain.
+        loaded_nodes: Array of node indices to load.
+        load_vector: 3D force vector [fx, fy, fz].
+        config: Optional solver configuration.
+
+    Returns:
+        Results object with displacements, stresses, etc.
+    """
+    return _solve_simple(
+        _unwrap_mesh(mesh),
+        material,
+        constrained_nodes,
+        loaded_nodes,
+        load_vector,
+        config,
+    )
+
 __all__ = [
-    # Core types from Rust
+    # Core types
     "Material",
     "Mesh",
+    "MeshError",
     "Results",
     "SolverConfig",
     # Python classes

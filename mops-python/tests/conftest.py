@@ -70,7 +70,7 @@ def single_tet4_elements() -> np.ndarray:
 @pytest.fixture
 def single_tet4_mesh(single_tet4_nodes, single_tet4_elements) -> Mesh:
     """Single tet4 element mesh."""
-    return Mesh(single_tet4_nodes, single_tet4_elements, "tet4")
+    return Mesh.from_arrays(single_tet4_nodes, single_tet4_elements, "tet4")
 
 
 @pytest.fixture
@@ -97,7 +97,7 @@ def two_tet4_elements() -> np.ndarray:
 @pytest.fixture
 def two_tet4_mesh(two_tet4_nodes, two_tet4_elements) -> Mesh:
     """Two tet4 elements sharing a face."""
-    return Mesh(two_tet4_nodes, two_tet4_elements, "tet4")
+    return Mesh.from_arrays(two_tet4_nodes, two_tet4_elements, "tet4")
 
 
 # =============================================================================
@@ -143,7 +143,7 @@ def single_tet10_elements() -> np.ndarray:
 @pytest.fixture
 def single_tet10_mesh(single_tet10_nodes, single_tet10_elements) -> Mesh:
     """Single tet10 element mesh."""
-    return Mesh(single_tet10_nodes, single_tet10_elements, "tet10")
+    return Mesh.from_arrays(single_tet10_nodes, single_tet10_elements, "tet10")
 
 
 # =============================================================================
@@ -182,7 +182,7 @@ def unit_cube_hex8_elements() -> np.ndarray:
 @pytest.fixture
 def unit_cube_hex8_mesh(unit_cube_hex8_nodes, unit_cube_hex8_elements) -> Mesh:
     """Single hex8 unit cube mesh."""
-    return Mesh(unit_cube_hex8_nodes, unit_cube_hex8_elements, "hex8")
+    return Mesh.from_arrays(unit_cube_hex8_nodes, unit_cube_hex8_elements, "hex8")
 
 
 @pytest.fixture
@@ -219,7 +219,7 @@ def two_hex8_elements() -> np.ndarray:
 @pytest.fixture
 def two_hex8_mesh(two_hex8_nodes, two_hex8_elements) -> Mesh:
     """Two hex8 elements stacked in z-direction."""
-    return Mesh(two_hex8_nodes, two_hex8_elements, "hex8")
+    return Mesh.from_arrays(two_hex8_nodes, two_hex8_elements, "hex8")
 
 
 # =============================================================================
@@ -248,7 +248,7 @@ def cantilever_tet4_mesh() -> Mesh:
         [0, 1, 2, 4],
         [0, 1, 3, 4],
     ], dtype=np.int64)
-    return Mesh(nodes, elements, "tet4")
+    return Mesh.from_arrays(nodes, elements, "tet4")
 
 
 @pytest.fixture
@@ -282,7 +282,7 @@ def cantilever_hex8_mesh() -> Mesh:
         [0, 4, 5, 1, 3, 7, 6, 2],   # Element 1 (x=0 to x=1)
         [4, 8, 9, 5, 7, 11, 10, 6], # Element 2 (x=1 to x=2)
     ], dtype=np.int64)
-    return Mesh(nodes, elements, "hex8")
+    return Mesh.from_arrays(nodes, elements, "hex8")
 
 
 # =============================================================================

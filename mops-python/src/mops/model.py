@@ -249,8 +249,12 @@ class Model:
                 load_vector[2] += load.fz
         loaded_nodes = np.array(list(set(loaded_nodes)), dtype=np.int64)
 
+        # Pass the underlying Rust mesh to the solver
+        mesh = self._state.mesh
+        core_mesh = mesh._inner if hasattr(mesh, "_inner") else mesh
+
         return solve_simple(
-            self._state.mesh,
+            core_mesh,
             material,
             constrained_nodes,
             loaded_nodes,
