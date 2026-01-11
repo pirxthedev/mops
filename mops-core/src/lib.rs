@@ -29,5 +29,5 @@ pub use element::{Element, create_element};
 pub use mesh::Mesh;
 pub use material::Material;
 pub use sparse::CsrMatrix;
-pub use solver::Solver;
+pub use solver::{Solver, FaerCholeskySolver, CachedCholeskySolver, SolverConfig, SolverType, select_solver};
 pub use error::{Error, Result};

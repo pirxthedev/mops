@@ -17,6 +17,9 @@ description = "Modular Open Physics Solver - High-performance FEA"
 nalgebra = "0.33"
 nalgebra-sparse = "0.10"
 
+# faer - Pure Rust linear algebra with sparse Cholesky support
+faer = "0.23"
+
 # Sparse matrices
 sprs = "0.11"
 

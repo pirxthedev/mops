@@ -12,6 +12,9 @@ description = "MOPS solver core - element library, assembly, and linear algebra"
 nalgebra = { workspace = true }
 nalgebra-sparse = { workspace = true }
 
+# faer - Pure Rust sparse Cholesky solver
+faer = { workspace = true }
+
 # Sparse matrices
 sprs = { workspace = true }
 
