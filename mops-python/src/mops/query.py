@@ -251,6 +251,10 @@ class NodeQuery(Query):
     predicates: dict[str, Any] = field(default_factory=dict)
     _all: bool = False
     _component_name: str | None = None
+    _near_point: tuple[tuple[float, float, float], float] | None = None
+    _in_sphere: tuple[tuple[float, float, float], float] | None = None
+    _in_box: tuple[tuple[float, float, float], tuple[float, float, float]] | None = None
+    _near_line: tuple[tuple[float, float, float], tuple[float, float, float], float] | None = None
 
     def and_where(self, **kwargs: Any) -> NodeQuery:
         """Intersect with additional predicate."""
@@ -298,6 +302,48 @@ class NodeQuery(Query):
         coords = mesh.coords  # Nx3 numpy array
         if coords.shape[0] == 0:
             return np.array([], dtype=np.int64)
+
+        # Handle geometric queries (near_point, in_sphere, in_box, near_line)
+        if self._near_point is not None:
+            point, tol = self._near_point
+            point_arr = np.array(point, dtype=np.float64)
+            distances = np.linalg.norm(coords - point_arr, axis=1)
+            return np.where(distances <= tol)[0].astype(np.int64)
+
+        if self._in_sphere is not None:
+            center, radius = self._in_sphere
+            center_arr = np.array(center, dtype=np.float64)
+            distances = np.linalg.norm(coords - center_arr, axis=1)
+            return np.where(distances <= radius)[0].astype(np.int64)
+
+        if self._in_box is not None:
+            min_corner, max_corner = self._in_box
+            min_arr = np.array(min_corner, dtype=np.float64)
+            max_arr = np.array(max_corner, dtype=np.float64)
+            in_box = np.all((coords >= min_arr) & (coords <= max_arr), axis=1)
+            return np.where(in_box)[0].astype(np.int64)
+
+        if self._near_line is not None:
+            start, end, tol = self._near_line
+            start_arr = np.array(start, dtype=np.float64)
+            end_arr = np.array(end, dtype=np.float64)
+            # Compute distance from each node to the line segment
+            line_vec = end_arr - start_arr
+            line_len_sq = np.dot(line_vec, line_vec)
+
+            if line_len_sq < 1e-14:
+                # Degenerate case: start == end, treat as point
+                distances = np.linalg.norm(coords - start_arr, axis=1)
+            else:
+                # Project each point onto the line and clamp to segment
+                # t = ((P - A) · (B - A)) / |B - A|^2, clamped to [0, 1]
+                t = np.dot(coords - start_arr, line_vec) / line_len_sq
+                t = np.clip(t, 0.0, 1.0)
+                # Closest point on segment: A + t * (B - A)
+                closest = start_arr + np.outer(t, line_vec)
+                distances = np.linalg.norm(coords - closest, axis=1)
+
+            return np.where(distances <= tol)[0].astype(np.int64)
 
         # Start with all nodes selected
         mask = np.ones(n_nodes, dtype=bool)
@@ -353,6 +399,18 @@ class NodeQuery(Query):
             return f"Nodes.in_component('{self._component_name}')"
         if self._all:
             return "Nodes.all()"
+        if self._near_point is not None:
+            point, tol = self._near_point
+            return f"Nodes.near_point({point}, tol={tol})"
+        if self._in_sphere is not None:
+            center, radius = self._in_sphere
+            return f"Nodes.in_sphere({center}, radius={radius})"
+        if self._in_box is not None:
+            min_corner, max_corner = self._in_box
+            return f"Nodes.in_box({min_corner}, {max_corner})"
+        if self._near_line is not None:
+            start, end, tol = self._near_line
+            return f"Nodes.near_line({start}, {end}, tol={tol})"
         return f"Nodes.where({self.predicates})"
 
 
@@ -474,6 +532,96 @@ class Nodes:
                                     dofs=["ux", "uy", "uz"])
         """
         return NodeQuery(_component_name=name)
+
+    @classmethod
+    def near_point(
+        cls,
+        point: tuple[float, float, float],
+        tol: float,
+    ) -> NodeQuery:
+        """Select nodes within tolerance of a point.
+
+        Args:
+            point: (x, y, z) coordinates of the point
+            tol: Maximum distance from the point to select nodes
+
+        Returns:
+            NodeQuery selecting nodes within distance tol of the point
+
+        Example::
+
+            # Select nodes near a specific point
+            Nodes.near_point((50, 25, 0), tol=0.1)
+        """
+        return NodeQuery(_near_point=(point, tol))
+
+    @classmethod
+    def in_sphere(
+        cls,
+        center: tuple[float, float, float],
+        radius: float,
+    ) -> NodeQuery:
+        """Select nodes within a sphere.
+
+        Args:
+            center: (x, y, z) coordinates of the sphere center
+            radius: Radius of the sphere
+
+        Returns:
+            NodeQuery selecting nodes inside the sphere (distance <= radius)
+
+        Example::
+
+            # Select nodes in a spherical region
+            Nodes.in_sphere((50, 50, 50), radius=10)
+        """
+        return NodeQuery(_in_sphere=(center, radius))
+
+    @classmethod
+    def in_box(
+        cls,
+        min_corner: tuple[float, float, float],
+        max_corner: tuple[float, float, float],
+    ) -> NodeQuery:
+        """Select nodes within an axis-aligned bounding box.
+
+        Args:
+            min_corner: (x_min, y_min, z_min) - corner with minimum coordinates
+            max_corner: (x_max, y_max, z_max) - corner with maximum coordinates
+
+        Returns:
+            NodeQuery selecting nodes inside the box (inclusive on all sides)
+
+        Example::
+
+            # Select nodes in a rectangular region
+            Nodes.in_box((0, 0, 0), (100, 50, 25))
+        """
+        return NodeQuery(_in_box=(min_corner, max_corner))
+
+    @classmethod
+    def near_line(
+        cls,
+        start: tuple[float, float, float],
+        end: tuple[float, float, float],
+        tol: float,
+    ) -> NodeQuery:
+        """Select nodes within tolerance of a line segment.
+
+        Args:
+            start: (x, y, z) coordinates of the line segment start point
+            end: (x, y, z) coordinates of the line segment end point
+            tol: Maximum distance from the line segment to select nodes
+
+        Returns:
+            NodeQuery selecting nodes within distance tol of the line segment
+
+        Example::
+
+            # Select nodes near an edge
+            Nodes.near_line((0, 0, 0), (100, 0, 0), tol=0.5)
+        """
+        return NodeQuery(_near_line=(start, end, tol))
 
 
 @dataclass
