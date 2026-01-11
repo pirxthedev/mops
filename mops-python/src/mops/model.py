@@ -226,11 +226,14 @@ class Model:
         # Get the first (and currently only) material
         material = next(iter(self._state.materials.values()))
 
+        # Get components dict for resolving component queries
+        components = self._state.components
+
         # Evaluate constraints to get constrained node indices
         constrained_nodes = []
         for query, dofs, value in self._state.constraints:
             # Evaluate the query to get node indices
-            node_indices = query.evaluate(self._state.mesh)
+            node_indices = query.evaluate(self._state.mesh, components)
             constrained_nodes.extend(node_indices)
         constrained_nodes = np.array(list(set(constrained_nodes)), dtype=np.int64)
 
@@ -238,7 +241,7 @@ class Model:
         loaded_nodes = []
         load_vector = np.zeros(3)
         for query, load in self._state.loads:
-            node_indices = query.evaluate(self._state.mesh)
+            node_indices = query.evaluate(self._state.mesh, components)
             loaded_nodes.extend(node_indices)
             # Accumulate force components
             if hasattr(load, "fx"):

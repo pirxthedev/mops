@@ -13,6 +13,10 @@ Example::
 
     # Combine queries
     Nodes.where(x=0).union(Nodes.where(x=100))
+
+    # Use named components
+    model = model.define_component("fixed_face", Nodes.where(x=0))
+    Nodes.in_component("fixed_face")
 """
 
 from __future__ import annotations
@@ -31,8 +35,16 @@ class Query(ABC):
     """Base class for all queries."""
 
     @abstractmethod
-    def evaluate(self, mesh: "Mesh") -> np.ndarray:
-        """Evaluate query against mesh, return indices."""
+    def evaluate(self, mesh: "Mesh", components: dict[str, "Query"] | None = None) -> np.ndarray:
+        """Evaluate query against mesh, return indices.
+
+        Args:
+            mesh: The mesh to evaluate against
+            components: Optional dict of named components for resolving component queries
+
+        Returns:
+            Array of indices (int64)
+        """
         ...
 
     def union(self, other: Query) -> Query:
@@ -43,6 +55,11 @@ class Query(ABC):
         """Set difference of two queries."""
         return SubtractQuery(self, other)
 
+    @property
+    def component_name(self) -> str | None:
+        """Return component name if this is a component query, else None."""
+        return None
+
 
 @dataclass
 class UnionQuery(Query):
@@ -51,9 +68,9 @@ class UnionQuery(Query):
     left: Query
     right: Query
 
-    def evaluate(self, mesh: "Mesh") -> np.ndarray:
-        left_indices = self.left.evaluate(mesh)
-        right_indices = self.right.evaluate(mesh)
+    def evaluate(self, mesh: "Mesh", components: dict[str, "Query"] | None = None) -> np.ndarray:
+        left_indices = self.left.evaluate(mesh, components)
+        right_indices = self.right.evaluate(mesh, components)
         return np.unique(np.concatenate([left_indices, right_indices]))
 
 
@@ -64,9 +81,9 @@ class SubtractQuery(Query):
     left: Query
     right: Query
 
-    def evaluate(self, mesh: "Mesh") -> np.ndarray:
-        left_indices = set(self.left.evaluate(mesh))
-        right_indices = set(self.right.evaluate(mesh))
+    def evaluate(self, mesh: "Mesh", components: dict[str, "Query"] | None = None) -> np.ndarray:
+        left_indices = set(self.left.evaluate(mesh, components))
+        right_indices = set(self.right.evaluate(mesh, components))
         return np.array(sorted(left_indices - right_indices), dtype=np.int64)
 
 
@@ -79,14 +96,41 @@ class NodeQuery(Query):
 
     predicates: dict[str, Any] = field(default_factory=dict)
     _all: bool = False
+    _component_name: str | None = None
 
     def and_where(self, **kwargs: Any) -> NodeQuery:
         """Intersect with additional predicate."""
         new_predicates = {**self.predicates, **kwargs}
         return NodeQuery(predicates=new_predicates)
 
-    def evaluate(self, mesh: "Mesh") -> np.ndarray:
+    @property
+    def component_name(self) -> str | None:
+        """Return component name if this is a component query, else None."""
+        return self._component_name
+
+    def evaluate(self, mesh: "Mesh", components: dict[str, "Query"] | None = None) -> np.ndarray:
         """Evaluate query, return node indices."""
+        # Handle component query - resolve the referenced component
+        if self._component_name is not None:
+            if components is None:
+                raise ValueError(
+                    f"Component query '{self._component_name}' requires components dict. "
+                    "Use model methods which pass components automatically."
+                )
+            if self._component_name not in components:
+                raise ValueError(
+                    f"Unknown component: '{self._component_name}'. "
+                    f"Available: {list(components.keys())}"
+                )
+            component_query = components[self._component_name]
+            # Verify the component query returns node indices (is a node query)
+            if not isinstance(component_query, NodeQuery):
+                raise TypeError(
+                    f"Component '{self._component_name}' is not a node query. "
+                    "Use the appropriate query type (Nodes, Elements, or Faces)."
+                )
+            return component_query.evaluate(mesh, components)
+
         n_nodes = mesh.n_nodes
 
         if self._all:
@@ -151,6 +195,8 @@ class NodeQuery(Query):
         return np.where(mask)[0].astype(np.int64)
 
     def __repr__(self) -> str:
+        if self._component_name is not None:
+            return f"Nodes.in_component('{self._component_name}')"
         if self._all:
             return "Nodes.all()"
         return f"Nodes.where({self.predicates})"
@@ -250,6 +296,31 @@ class Nodes:
         """
         return NodeQuery(predicates={"indices": indices})
 
+    @classmethod
+    def in_component(cls, name: str) -> NodeQuery:
+        """Select nodes in a named component.
+
+        Components are defined using Model.define_component() and allow
+        reusable selections to be referenced by name, similar to APDL's
+        CM (component manager) and CMSEL commands.
+
+        Args:
+            name: Name of the component to select
+
+        Returns:
+            NodeQuery that resolves to the component's nodes when evaluated
+
+        Example::
+
+            # Define a component
+            model = model.define_component("fixed_nodes", Nodes.where(x=0))
+
+            # Use the component in constraints
+            model = model.constrain(Nodes.in_component("fixed_nodes"),
+                                    dofs=["ux", "uy", "uz"])
+        """
+        return NodeQuery(_component_name=name)
+
 
 @dataclass
 class ElementQuery(Query):
@@ -257,14 +328,41 @@ class ElementQuery(Query):
 
     predicates: dict[str, Any] = field(default_factory=dict)
     _all: bool = False
+    _component_name: str | None = None
 
     def and_where(self, **kwargs: Any) -> ElementQuery:
         """Intersect with additional predicate."""
         new_predicates = {**self.predicates, **kwargs}
         return ElementQuery(predicates=new_predicates)
 
-    def evaluate(self, mesh: "Mesh") -> np.ndarray:
+    @property
+    def component_name(self) -> str | None:
+        """Return component name if this is a component query, else None."""
+        return self._component_name
+
+    def evaluate(self, mesh: "Mesh", components: dict[str, "Query"] | None = None) -> np.ndarray:
         """Evaluate query, return element indices."""
+        # Handle component query - resolve the referenced component
+        if self._component_name is not None:
+            if components is None:
+                raise ValueError(
+                    f"Component query '{self._component_name}' requires components dict. "
+                    "Use model methods which pass components automatically."
+                )
+            if self._component_name not in components:
+                raise ValueError(
+                    f"Unknown component: '{self._component_name}'. "
+                    f"Available: {list(components.keys())}"
+                )
+            component_query = components[self._component_name]
+            # Verify the component query returns element indices (is an element query)
+            if not isinstance(component_query, ElementQuery):
+                raise TypeError(
+                    f"Component '{self._component_name}' is not an element query. "
+                    "Use the appropriate query type (Nodes, Elements, or Faces)."
+                )
+            return component_query.evaluate(mesh, components)
+
         n_elements = mesh.n_elements
 
         if self._all:
@@ -279,6 +377,8 @@ class ElementQuery(Query):
     def __repr__(self) -> str:
         if self._all:
             return "Elements.all()"
+        if self._component_name is not None:
+            return f"Elements.in_component('{self._component_name}')"
         return f"Elements.where({self.predicates})"
 
 
@@ -342,6 +442,30 @@ class Elements:
         """Select elements by index."""
         return ElementQuery(predicates={"indices": indices})
 
+    @classmethod
+    def in_component(cls, name: str) -> ElementQuery:
+        """Select elements in a named component.
+
+        Components are defined using Model.define_component() and allow
+        reusable selections to be referenced by name, similar to APDL's
+        CM (component manager) and CMSEL commands.
+
+        Args:
+            name: Name of the component to select
+
+        Returns:
+            ElementQuery that resolves to the component's elements when evaluated
+
+        Example::
+
+            # Define a component
+            model = model.define_component("bracket", Elements.where(type="hex8"))
+
+            # Use the component
+            model = model.assign(Elements.in_component("bracket"), material="steel")
+        """
+        return ElementQuery(_component_name=name)
+
 
 @dataclass
 class FaceQuery(Query):
@@ -352,22 +476,50 @@ class FaceQuery(Query):
 
     predicates: dict[str, Any] = field(default_factory=dict)
     _on_elements: "ElementQuery | None" = None
+    _component_name: str | None = None
 
     def and_where(self, **kwargs: Any) -> FaceQuery:
         """Intersect with additional predicate."""
         new_predicates = {**self.predicates, **kwargs}
         return FaceQuery(predicates=new_predicates, _on_elements=self._on_elements)
 
-    def evaluate(self, mesh: "Mesh") -> np.ndarray:
+    @property
+    def component_name(self) -> str | None:
+        """Return component name if this is a component query, else None."""
+        return self._component_name
+
+    def evaluate(self, mesh: "Mesh", components: dict[str, "Query"] | None = None) -> np.ndarray:
         """Evaluate query, return Nx2 array of (element_idx, local_face_idx).
 
         Args:
             mesh: The Mesh object to evaluate against. Must be the Python Mesh
                   wrapper (from mops.mesh), not the raw Rust _CoreMesh.
+            components: Optional dict of named components for resolving component queries
 
         Returns:
             Nx2 array of face identifiers [element_index, local_face_index].
         """
+        # Handle component query - resolve the referenced component
+        if self._component_name is not None:
+            if components is None:
+                raise ValueError(
+                    f"Component query '{self._component_name}' requires components dict. "
+                    "Use model methods which pass components automatically."
+                )
+            if self._component_name not in components:
+                raise ValueError(
+                    f"Unknown component: '{self._component_name}'. "
+                    f"Available: {list(components.keys())}"
+                )
+            component_query = components[self._component_name]
+            # Verify the component query returns face indices (is a face query)
+            if not isinstance(component_query, FaceQuery):
+                raise TypeError(
+                    f"Component '{self._component_name}' is not a face query. "
+                    "Use the appropriate query type (Nodes, Elements, or Faces)."
+                )
+            return component_query.evaluate(mesh, components)
+
         # Import here to avoid circular import
         from mops.mesh import Mesh as PythonMesh
 
@@ -485,6 +637,8 @@ class FaceQuery(Query):
         return candidate_faces[mask]
 
     def __repr__(self) -> str:
+        if self._component_name is not None:
+            return f"Faces.in_component('{self._component_name}')"
         if self._on_elements is not None:
             return f"Faces.on_elements({self._on_elements}).and_where({self.predicates})"
         return f"Faces.where({self.predicates})"
@@ -633,3 +787,28 @@ class Faces:
 
         predicates.update(kwargs)
         return FaceQuery(predicates=predicates)
+
+    @classmethod
+    def in_component(cls, name: str) -> FaceQuery:
+        """Select faces in a named component.
+
+        Components are defined using Model.define_component() and allow
+        reusable selections to be referenced by name, similar to APDL's
+        CM (component manager) and CMSEL commands.
+
+        Args:
+            name: Name of the component to select
+
+        Returns:
+            FaceQuery that resolves to the component's faces when evaluated
+
+        Example::
+
+            # Define a component
+            model = model.define_component("load_surface",
+                                           Faces.on_boundary().and_where(x=100))
+
+            # Use the component
+            model = model.load(Faces.in_component("load_surface"), Pressure(1e6))
+        """
+        return FaceQuery(_component_name=name)
