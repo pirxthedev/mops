@@ -9,6 +9,7 @@
 //! - [`tet4`] - 4-node tetrahedron (constant strain)
 //! - [`tet10`] - 10-node tetrahedron (quadratic)
 //! - [`hex8`] - 8-node hexahedron (trilinear brick)
+//! - [`hex20`] - 20-node hexahedron (serendipity quadratic brick)
 //! - [`plane_stress`] - 2D plane stress elements (Tri3, Quad4)
 //! - [`plane_strain`] - 2D plane strain elements (Tri3, Quad4)
 //! - [`axisymmetric`] - Axisymmetric elements for bodies of revolution (Tri3, Quad4)
@@ -39,17 +40,16 @@ use nalgebra::DMatrix;
 
 pub mod axisymmetric;
 pub mod gauss;
+pub mod hex20;
 pub mod hex8;
 pub mod plane_strain;
 pub mod plane_stress;
 pub mod tet10;
 pub mod tet4;
 
-// Element implementations (to be added)
-// pub mod hex20;
-
 pub use axisymmetric::{Quad4Axisymmetric, Tri3Axisymmetric};
 pub use gauss::{gauss_1d, gauss_hex, gauss_quad, gauss_tet, gauss_tri, GaussPoint};
+pub use hex20::Hex20;
 pub use hex8::Hex8;
 pub use plane_strain::{Quad4PlaneStrain, Tri3PlaneStrain};
 pub use plane_stress::{Quad4, Tri3};
@@ -138,11 +138,10 @@ pub fn create_element(element_type: ElementType) -> Box<dyn Element> {
         ElementType::Tet4 => Box::new(Tet4::new()),
         ElementType::Tet10 => Box::new(Tet10::new()),
         ElementType::Hex8 => Box::new(Hex8::new()),
-        // Future implementations:
-        // ElementType::Hex20 => Box::new(Hex20::new()),
+        ElementType::Hex20 => Box::new(Hex20::new()),
         _ => unimplemented!(
             "Element type {:?} is not yet implemented. \
-             Currently supported: Tet4, Tet10, Hex8",
+             Currently supported: Tet4, Tet10, Hex8, Hex20",
             element_type
         ),
     }
@@ -177,8 +176,10 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "not yet implemented")]
-    fn test_create_element_unimplemented_hex20() {
-        let _ = create_element(ElementType::Hex20);
+    fn test_create_element_hex20() {
+        let element = create_element(ElementType::Hex20);
+        assert_eq!(element.n_nodes(), 20);
+        assert_eq!(element.dofs_per_node(), 3);
+        assert_eq!(element.n_dofs(), 60);
     }
 }
