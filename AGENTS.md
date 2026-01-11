@@ -54,6 +54,18 @@ bd close <id>         # Complete work
 bd sync               # Sync with git
 ```
 
+## Starting Work
+
+**BEFORE writing any code**, claim the issue:
+
+```bash
+bd ready                              # Pick an issue
+bd update <id> --status in_progress   # Mark as in progress
+bd sync                               # Sync to remote
+```
+
+This prevents duplicate work across parallel agents and provides visibility into what's being worked on.
+
 ## Landing the Plane (Session Completion)
 
 **When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
