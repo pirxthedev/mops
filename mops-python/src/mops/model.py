@@ -229,13 +229,26 @@ class Model:
         # Get components dict for resolving component queries
         components = self._state.components
 
-        # Evaluate constraints to get constrained node indices
-        constrained_nodes = []
+        # DOF name to index mapping
+        dof_map = {"ux": 0, "uy": 1, "uz": 2}
+
+        # Build constraint array: each row is (node_index, dof_index, value)
+        constraint_rows = []
         for query, dofs, value in self._state.constraints:
             # Evaluate the query to get node indices
             node_indices = query.evaluate(self._state.mesh, components)
-            constrained_nodes.extend(node_indices)
-        constrained_nodes = np.array(list(set(constrained_nodes)), dtype=np.int64)
+            for node_idx in node_indices:
+                for dof_name in dofs:
+                    if dof_name in dof_map:
+                        dof_idx = dof_map[dof_name]
+                        constraint_rows.append([float(node_idx), float(dof_idx), value])
+
+        # Convert to Nx3 array
+        if constraint_rows:
+            constraints = np.array(constraint_rows, dtype=np.float64)
+        else:
+            # Empty constraints array with correct shape
+            constraints = np.zeros((0, 3), dtype=np.float64)
 
         # Evaluate loads to get loaded node indices and force vector
         loaded_nodes = []
@@ -259,7 +272,7 @@ class Model:
         return solve_simple(
             core_mesh,
             material,
-            constrained_nodes,
+            constraints,
             loaded_nodes,
             load_vector,
             config,

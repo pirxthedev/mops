@@ -389,12 +389,21 @@ impl PyResults {
 /// Solve a simple FEA problem.
 ///
 /// This is a convenience function for testing the solver pipeline.
+///
+/// Args:
+///     mesh: Finite element mesh
+///     material: Material properties
+///     constraints: Nx3 array of (node_index, dof_index, value) for displacement constraints.
+///                  dof_index: 0=ux, 1=uy, 2=uz
+///     loaded_nodes: Array of node indices where forces are applied
+///     load_vector: [fx, fy, fz] force components applied at each loaded node
+///     _config: Optional solver configuration
 #[pyfunction]
-#[pyo3(signature = (mesh, material, constrained_nodes, loaded_nodes, load_vector, _config=None))]
+#[pyo3(signature = (mesh, material, constraints, loaded_nodes, load_vector, _config=None))]
 fn solve_simple(
     mesh: &PyMesh,
     material: &PyMaterial,
-    constrained_nodes: PyReadonlyArray1<i64>,
+    constraints: PyReadonlyArray2<f64>,
     loaded_nodes: PyReadonlyArray1<i64>,
     load_vector: PyReadonlyArray1<f64>,
     _config: Option<&PySolverConfig>,
@@ -402,7 +411,7 @@ fn solve_simple(
     let core_material = material.to_core();
 
     // Build boundary conditions
-    let constrained = constrained_nodes.as_array();
+    let constraints_array = constraints.as_array();
     let loaded = loaded_nodes.as_array();
     let load_vec = load_vector.as_array();
 
@@ -410,18 +419,30 @@ fn solve_simple(
         return Err(PyValueError::new_err("load_vector must have 3 components"));
     }
 
+    // Validate constraints array shape
+    let constraints_shape = constraints.shape();
+    if constraints_shape.len() != 2 || constraints_shape[1] != 3 {
+        return Err(PyValueError::new_err(
+            "constraints must be Nx3 array with columns (node_index, dof_index, value)",
+        ));
+    }
+
     let mut bcs = Vec::new();
 
-    // Add displacement constraints (fix all DOFs at constrained nodes)
-    for &node_idx in constrained.iter() {
-        let node = node_idx as usize;
-        for dof in 0..3 {
-            bcs.push(BoundaryCondition::Displacement {
-                node,
-                dof,
-                value: 0.0,
-            });
+    // Add displacement constraints from the Nx3 array
+    for i in 0..constraints_shape[0] {
+        let node = constraints_array[[i, 0]] as usize;
+        let dof = constraints_array[[i, 1]] as usize;
+        let value = constraints_array[[i, 2]];
+
+        if dof > 2 {
+            return Err(PyValueError::new_err(format!(
+                "Invalid DOF index {} at constraint row {}. Valid: 0 (ux), 1 (uy), 2 (uz)",
+                dof, i
+            )));
         }
+
+        bcs.push(BoundaryCondition::Displacement { node, dof, value });
     }
 
     // Add forces at loaded nodes

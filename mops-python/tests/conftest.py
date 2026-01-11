@@ -292,8 +292,13 @@ def cantilever_hex8_mesh() -> Mesh:
 
 @pytest.fixture
 def fix_first_four_nodes() -> np.ndarray:
-    """Constrained node indices for fixing nodes 0-3."""
-    return np.array([0, 1, 2, 3], dtype=np.int64)
+    """Constraint array for fixing all DOFs at nodes 0-3.
+
+    Returns:
+        Nx3 array with columns (node_index, dof_index, value)
+    """
+    nodes = np.array([0, 1, 2, 3], dtype=np.int64)
+    return nodes_to_constraints(nodes)
 
 
 @pytest.fixture
@@ -336,22 +341,65 @@ def direct_solver_config() -> SolverConfig:
 # =============================================================================
 
 
+def nodes_to_constraints(
+    nodes: np.ndarray,
+    dofs: list[int] | None = None,
+    value: float = 0.0,
+) -> np.ndarray:
+    """Convert node indices to per-DOF constraint array.
+
+    Args:
+        nodes: 1D array of node indices
+        dofs: List of DOF indices to constrain (0=ux, 1=uy, 2=uz).
+              If None, constrains all DOFs (0, 1, 2).
+        value: Prescribed displacement value (default 0.0)
+
+    Returns:
+        Nx3 array with columns (node_index, dof_index, value)
+    """
+    if dofs is None:
+        dofs = [0, 1, 2]
+
+    rows = []
+    for node_idx in nodes:
+        for dof in dofs:
+            rows.append([float(node_idx), float(dof), value])
+
+    if len(rows) == 0:
+        return np.zeros((0, 3), dtype=np.float64)
+    return np.array(rows, dtype=np.float64)
+
+
 def assert_displacement_at_fixed_nodes_zero(
     displacement: np.ndarray,
-    fixed_nodes: np.ndarray,
+    constraints: np.ndarray,
     atol: float = 1e-10,
 ) -> None:
-    """Assert that displacements at fixed nodes are zero.
+    """Assert that displacements at constrained DOFs are zero.
 
     Args:
         displacement: Displacement array of shape (n_nodes, 3).
-        fixed_nodes: Array of fixed node indices.
+        constraints: Either 1D array of node indices (legacy) or
+                     Nx3 constraint array with (node, dof, value).
         atol: Absolute tolerance for comparison.
     """
-    for node_idx in fixed_nodes:
-        assert np.allclose(displacement[node_idx], 0.0, atol=atol), (
-            f"Node {node_idx} should have zero displacement, got {displacement[node_idx]}"
-        )
+    # Handle both legacy format (1D node indices) and new format (Nx3 constraints)
+    if constraints.ndim == 1:
+        # Legacy: 1D array of node indices, assume all DOFs fixed
+        for node_idx in constraints:
+            assert np.allclose(displacement[node_idx], 0.0, atol=atol), (
+                f"Node {node_idx} should have zero displacement, got {displacement[node_idx]}"
+            )
+    else:
+        # New format: Nx3 array with (node, dof, value)
+        for row in constraints:
+            node_idx = int(row[0])
+            dof = int(row[1])
+            value = row[2]
+            actual = displacement[node_idx, dof]
+            assert np.isclose(actual, value, atol=atol), (
+                f"Node {node_idx} DOF {dof} should be {value}, got {actual}"
+            )
 
 
 def assert_positive_displacement(

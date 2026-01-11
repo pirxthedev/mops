@@ -8,6 +8,7 @@ from mops import Material, Mesh, SolverConfig, solve_simple, solver_info, versio
 from .conftest import (
     assert_displacement_at_fixed_nodes_zero,
     assert_negative_displacement,
+    nodes_to_constraints,
 )
 
 
@@ -255,6 +256,7 @@ class TestSolveSimple:
         """Test solving with hex8 element (unit cube)."""
         # Fix bottom face (nodes 0-3)
         constrained_nodes = np.array([0, 1, 2, 3], dtype=np.int64)
+        constraints = nodes_to_constraints(constrained_nodes)
 
         # Apply force at top corner (node 6)
         loaded_nodes = np.array([6], dtype=np.int64)
@@ -262,7 +264,7 @@ class TestSolveSimple:
         results = solve_simple(
             unit_cube_hex8_mesh,
             steel,
-            constrained_nodes,
+            constraints,
             loaded_nodes,
             x_direction_force,
         )
@@ -272,7 +274,7 @@ class TestSolveSimple:
         assert len(disp_mag) == 8
 
         disp = results.displacement()
-        assert_displacement_at_fixed_nodes_zero(disp, constrained_nodes)
+        assert_displacement_at_fixed_nodes_zero(disp, constraints)
 
     def test_solve_two_hex8_stacked(
         self,
@@ -283,6 +285,7 @@ class TestSolveSimple:
         """Test solving with two stacked hex8 elements."""
         # Fix bottom face (nodes 0-3)
         constrained_nodes = np.array([0, 1, 2, 3], dtype=np.int64)
+        constraints = nodes_to_constraints(constrained_nodes)
 
         # Apply force at top corner (node 10)
         loaded_nodes = np.array([10], dtype=np.int64)
@@ -290,7 +293,7 @@ class TestSolveSimple:
         results = solve_simple(
             two_hex8_mesh,
             steel,
-            constrained_nodes,
+            constraints,
             loaded_nodes,
             downward_force,
         )
@@ -299,7 +302,7 @@ class TestSolveSimple:
         disp = results.displacement()
         assert disp.shape == (12, 3)
 
-        assert_displacement_at_fixed_nodes_zero(disp, constrained_nodes)
+        assert_displacement_at_fixed_nodes_zero(disp, constraints)
 
     def test_soft_material_large_displacement(
         self,
@@ -308,13 +311,14 @@ class TestSolveSimple:
     ):
         """Test that soft material produces larger displacements."""
         constrained_nodes = np.array([0, 1, 2], dtype=np.int64)
+        constraints = nodes_to_constraints(constrained_nodes)
         loaded_nodes = np.array([3], dtype=np.int64)
         load = np.array([0.0, 0.0, -1000.0], dtype=np.float64)
 
         results = solve_simple(
             single_tet4_mesh,
             soft_material,
-            constrained_nodes,
+            constraints,
             loaded_nodes,
             load,
         )

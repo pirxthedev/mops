@@ -310,6 +310,7 @@ class TestMeshSolveIntegration:
     def test_solve_gmsh_mesh(self, gmsh_box_mesh, steel):
         """Solve a problem with mesh from Gmsh."""
         from mops import solve_simple
+        from tests.conftest import nodes_to_constraints
 
         mesh = gmsh_box_mesh
 
@@ -319,6 +320,7 @@ class TestMeshSolveIntegration:
         x_max = coords[:, 0].max()
 
         fixed_nodes = np.where(np.abs(coords[:, 0] - x_min) < 1e-6)[0].astype(np.int64)
+        constraints = nodes_to_constraints(fixed_nodes)
         loaded_nodes = np.where(np.abs(coords[:, 0] - x_max) < 1e-6)[0].astype(np.int64)
 
         assert len(fixed_nodes) > 0, "Should have fixed nodes"
@@ -329,7 +331,7 @@ class TestMeshSolveIntegration:
         results = solve_simple(
             mesh._core,  # Use the underlying Rust mesh
             steel,
-            fixed_nodes,
+            constraints,
             loaded_nodes,
             load,
         )

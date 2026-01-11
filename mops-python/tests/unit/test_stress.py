@@ -4,6 +4,8 @@ import numpy as np
 import pytest
 import mops
 
+from tests.conftest import nodes_to_constraints
+
 
 class TestStressRecovery:
     """Test stress recovery from displacement solution."""
@@ -21,10 +23,11 @@ class TestStressRecovery:
         material = mops.Material.steel()
 
         constrained = np.array([0, 2, 3], dtype=np.int64)
+        constraints = nodes_to_constraints(constrained)
         loaded = np.array([1], dtype=np.int64)
         load = np.array([1000.0, 0.0, 0.0], dtype=np.float64)
 
-        results = mops.solve_simple(mesh, material, constrained, loaded, load)
+        results = mops.solve_simple(mesh, material, constraints, loaded, load)
         stress = results.stress()
 
         assert stress.shape == (1, 6), f"Expected (1, 6), got {stress.shape}"
@@ -48,10 +51,11 @@ class TestStressRecovery:
 
         # Need to fully constrain some nodes to make system SPD
         constrained = np.array([0, 1, 2], dtype=np.int64)  # Fixed shared face
+        constraints = nodes_to_constraints(constrained)
         loaded = np.array([3], dtype=np.int64)  # Load on tip
         load = np.array([0.0, 0.0, 1000.0], dtype=np.float64)
 
-        results = mops.solve_simple(mesh, material, constrained, loaded, load)
+        results = mops.solve_simple(mesh, material, constraints, loaded, load)
         stress = results.stress()
 
         assert stress.shape == (2, 6), f"Expected (2, 6), got {stress.shape}"
@@ -69,10 +73,11 @@ class TestStressRecovery:
         material = mops.Material.steel()
 
         constrained = np.array([0, 2, 3], dtype=np.int64)
+        constraints = nodes_to_constraints(constrained)
         loaded = np.array([1], dtype=np.int64)
         load = np.array([1000.0, 0.0, 0.0], dtype=np.float64)
 
-        results = mops.solve_simple(mesh, material, constrained, loaded, load)
+        results = mops.solve_simple(mesh, material, constraints, loaded, load)
         vm = results.von_mises()
 
         assert vm.shape == (1,), f"Expected (1,), got {vm.shape}"
@@ -96,10 +101,11 @@ class TestStressRecovery:
 
         # Need 3 nodes to fully constrain (remove rigid body modes)
         constrained = np.array([0, 1, 2], dtype=np.int64)
+        constraints = nodes_to_constraints(constrained)
         loaded = np.array([3], dtype=np.int64)
         load = np.array([0.0, 0.0, 1000.0], dtype=np.float64)
 
-        results = mops.solve_simple(mesh, material, constrained, loaded, load)
+        results = mops.solve_simple(mesh, material, constraints, loaded, load)
 
         assert results.max_von_mises() == pytest.approx(np.max(results.von_mises()))
 
@@ -116,10 +122,11 @@ class TestStressRecovery:
         material = mops.Material.steel()
 
         constrained = np.array([0, 2, 3], dtype=np.int64)
+        constraints = nodes_to_constraints(constrained)
         loaded = np.array([1], dtype=np.int64)
         load = np.array([1000.0, 0.0, 0.0], dtype=np.float64)
 
-        results = mops.solve_simple(mesh, material, constrained, loaded, load)
+        results = mops.solve_simple(mesh, material, constraints, loaded, load)
         elem_stress = results.element_stress(0)
 
         assert elem_stress.shape == (6,)
@@ -139,10 +146,11 @@ class TestStressRecovery:
         material = mops.Material.steel()
 
         constrained = np.array([0, 2, 3], dtype=np.int64)
+        constraints = nodes_to_constraints(constrained)
         loaded = np.array([1], dtype=np.int64)
         load = np.array([1000.0, 0.0, 0.0], dtype=np.float64)
 
-        results = mops.solve_simple(mesh, material, constrained, loaded, load)
+        results = mops.solve_simple(mesh, material, constraints, loaded, load)
 
         with pytest.raises(ValueError):
             results.element_stress(10)  # Out of bounds
@@ -161,10 +169,11 @@ class TestStressRecovery:
 
         # Fix all nodes - zero displacement
         constrained = np.array([0, 1, 2, 3], dtype=np.int64)
+        constraints = nodes_to_constraints(constrained)
         loaded = np.array([], dtype=np.int64)
         load = np.array([0.0, 0.0, 0.0], dtype=np.float64)
 
-        results = mops.solve_simple(mesh, material, constrained, loaded, load)
+        results = mops.solve_simple(mesh, material, constraints, loaded, load)
 
         assert results.max_von_mises() == pytest.approx(0.0, abs=1e-10)
 
@@ -273,10 +282,11 @@ class TestVonMisesCalculation:
         material = mops.Material.steel()
 
         constrained = np.array([0, 2, 3], dtype=np.int64)
+        constraints = nodes_to_constraints(constrained)
         loaded = np.array([1], dtype=np.int64)
         load = np.array([10000.0, 0.0, 0.0], dtype=np.float64)
 
-        results = mops.solve_simple(mesh, material, constrained, loaded, load)
+        results = mops.solve_simple(mesh, material, constraints, loaded, load)
 
         # The stress field should be dominated by normal stress in x
         stress = results.stress()[0]
@@ -302,10 +312,11 @@ class TestVonMisesCalculation:
         material = mops.Material.steel()
 
         constrained = np.array([0], dtype=np.int64)
+        constraints = nodes_to_constraints(constrained)
         loaded = np.array([1, 2, 3], dtype=np.int64)
         load = np.array([-500.0, 200.0, -300.0], dtype=np.float64)  # Mixed load
 
-        results = mops.solve_simple(mesh, material, constrained, loaded, load)
+        results = mops.solve_simple(mesh, material, constraints, loaded, load)
         vm = results.von_mises()
 
         assert np.all(vm >= 0), "Von Mises stress must be non-negative"
@@ -327,10 +338,11 @@ class TestResultsRepr:
         material = mops.Material.steel()
 
         constrained = np.array([0, 2, 3], dtype=np.int64)
+        constraints = nodes_to_constraints(constrained)
         loaded = np.array([1], dtype=np.int64)
         load = np.array([1000.0, 0.0, 0.0], dtype=np.float64)
 
-        results = mops.solve_simple(mesh, material, constrained, loaded, load)
+        results = mops.solve_simple(mesh, material, constraints, loaded, load)
         repr_str = repr(results)
 
         assert "n_elements=" in repr_str
