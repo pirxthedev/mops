@@ -251,7 +251,8 @@ impl Quad4 {
         Self { thickness }
     }
 
-    /// Node positions in natural coordinates.
+    /// Node positions in natural coordinates (for tests).
+    #[cfg(test)]
     const NODE_COORDS: [(f64, f64); 4] = [
         (-1.0, -1.0), // Node 1
         (1.0, -1.0),  // Node 2
@@ -259,7 +260,8 @@ impl Quad4 {
         (-1.0, 1.0),  // Node 4
     ];
 
-    /// Evaluate shape functions at natural coordinates (ξ, η).
+    /// Evaluate shape functions at natural coordinates (ξ, η) (for tests).
+    #[cfg(test)]
     fn shape_functions(xi: f64, eta: f64) -> [f64; 4] {
         [
             0.25 * (1.0 - xi) * (1.0 - eta), // N1
