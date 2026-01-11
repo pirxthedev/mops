@@ -1,12 +1,12 @@
-//! Plane stress elements for 2D analysis.
+//! Plane strain elements for 2D analysis.
 //!
-//! Plane stress elements are used for thin structures where out-of-plane
-//! stresses are negligible (σ_z = 0). Common applications include thin plates,
-//! membranes, and shells under in-plane loading.
+//! Plane strain elements are used for thick structures where out-of-plane
+//! strains are negligible (ε_z = 0). Common applications include dams, tunnels,
+//! retaining walls, and long prismatic structures under transverse loading.
 //!
 //! This module provides:
-//! - [`Tri3`] - 3-node triangle (Constant Strain Triangle, CST)
-//! - [`Quad4`] - 4-node quadrilateral (bilinear)
+//! - [`Tri3PlaneStrain`] - 3-node triangle (Constant Strain Triangle, CST)
+//! - [`Quad4PlaneStrain`] - 4-node quadrilateral (bilinear)
 //!
 //! # Coordinate System
 //!
@@ -15,13 +15,15 @@
 //!
 //! # Thickness Parameter
 //!
-//! The element thickness is specified at construction time and affects
-//! the stiffness matrix scaling: K = t * ∫∫ B^T * D * B dA
+//! The element thickness is specified at construction time. For plane strain,
+//! this typically represents a unit depth (thickness = 1.0) for per-unit-depth
+//! analysis.
 //!
 //! # Stress Output
 //!
 //! Stresses are returned as 6-component tensors for compatibility with 3D
-//! elements. For plane stress: σ_z = τ_yz = τ_xz = 0.
+//! elements. For plane strain: ε_z = γ_yz = γ_xz = 0, but σ_z ≠ 0 (computed from
+//! σ_z = ν(σ_x + σ_y)).
 
 use crate::element::gauss::gauss_quad;
 use crate::element::Element;
@@ -29,7 +31,7 @@ use crate::material::Material;
 use crate::types::{Point3, StressTensor};
 use nalgebra::{DMatrix, Matrix2, Vector2, Vector3, Vector6};
 
-/// 3-node triangular plane stress element (Constant Strain Triangle).
+/// 3-node triangular plane strain element (Constant Strain Triangle).
 ///
 /// The simplest 2D element with:
 /// - 3 nodes at vertices
@@ -38,19 +40,24 @@ use nalgebra::{DMatrix, Matrix2, Vector2, Vector3, Vector6};
 /// - Constant strain/stress within element
 /// - Single integration point at centroid
 ///
+/// # Plane Strain Assumption
+///
+/// ε_z = γ_yz = γ_xz = 0, meaning the structure is constrained in the z-direction.
+/// This leads to non-zero σ_z = ν(σ_x + σ_y).
+///
 /// # Limitations
 ///
 /// - Volumetric locking in nearly incompressible materials
 /// - Low accuracy - requires fine meshes
 /// - Poor performance in bending-dominated problems
 #[derive(Debug, Clone, Copy)]
-pub struct Tri3 {
-    /// Element thickness.
+pub struct Tri3PlaneStrain {
+    /// Element thickness (typically 1.0 for per-unit-depth analysis).
     thickness: f64,
 }
 
-impl Tri3 {
-    /// Create a new Tri3 element with specified thickness.
+impl Tri3PlaneStrain {
+    /// Create a new Tri3PlaneStrain element with specified thickness.
     ///
     /// # Arguments
     ///
@@ -146,7 +153,7 @@ impl Tri3 {
     }
 }
 
-impl Element for Tri3 {
+impl Element for Tri3PlaneStrain {
     fn n_nodes(&self) -> usize {
         3
     }
@@ -158,8 +165,8 @@ impl Element for Tri3 {
     fn stiffness(&self, coords: &[Point3], material: &Material) -> DMatrix<f64> {
         let (b, area) = Self::compute_b_matrix(coords);
 
-        // D is the 3x3 plane stress constitutive matrix
-        let d = material.constitutive_plane_stress();
+        // D is the 3x3 plane strain constitutive matrix
+        let d = material.constitutive_plane_strain();
 
         // K = t * A * B^T * D * B (6x6)
         let db = &d * &b; // 3x6
@@ -181,20 +188,24 @@ impl Element for Tri3 {
         );
 
         let (b, _area) = Self::compute_b_matrix(coords);
-        let d = material.constitutive_plane_stress();
+        let d = material.constitutive_plane_strain();
 
         // ε = B * u (3x1)
         let u = nalgebra::DVector::from_row_slice(displacements);
         let strain = &b * &u;
 
-        // σ = D * ε (3x1)
+        // σ = D * ε (3x1) for in-plane stresses
         let stress_2d = &d * Vector3::from_iterator(strain.iter().cloned());
 
-        // Convert to 6-component stress tensor (σ_z = τ_yz = τ_xz = 0)
+        // For plane strain, σ_z = ν(σ_x + σ_y)
+        let nu = material.poissons_ratio;
+        let sigma_z = nu * (stress_2d[0] + stress_2d[1]);
+
+        // Convert to 6-component stress tensor
         let stress_6 = Vector6::new(
             stress_2d[0], // σ_xx
             stress_2d[1], // σ_yy
-            0.0,          // σ_zz = 0 (plane stress)
+            sigma_z,      // σ_zz = ν(σ_x + σ_y) for plane strain
             stress_2d[2], // τ_xy
             0.0,          // τ_yz = 0
             0.0,          // τ_xz = 0
@@ -209,7 +220,7 @@ impl Element for Tri3 {
     }
 }
 
-/// 4-node quadrilateral plane stress element.
+/// 4-node quadrilateral plane strain element.
 ///
 /// A 2D element with:
 /// - 4 nodes at corners
@@ -217,6 +228,11 @@ impl Element for Tri3 {
 /// - 8 total DOFs
 /// - Bilinear shape functions
 /// - 2×2 Gauss quadrature (4 integration points)
+///
+/// # Plane Strain Assumption
+///
+/// ε_z = γ_yz = γ_xz = 0, meaning the structure is constrained in the z-direction.
+/// This leads to non-zero σ_z = ν(σ_x + σ_y).
 ///
 /// # Shape Functions
 ///
@@ -235,13 +251,13 @@ impl Element for Tri3 {
 /// ```
 /// Node 1: (-1, -1), Node 2: (+1, -1), Node 3: (+1, +1), Node 4: (-1, +1)
 #[derive(Debug, Clone, Copy)]
-pub struct Quad4 {
-    /// Element thickness.
+pub struct Quad4PlaneStrain {
+    /// Element thickness (typically 1.0 for per-unit-depth analysis).
     thickness: f64,
 }
 
-impl Quad4 {
-    /// Create a new Quad4 element with specified thickness.
+impl Quad4PlaneStrain {
+    /// Create a new Quad4PlaneStrain element with specified thickness.
     ///
     /// # Arguments
     ///
@@ -352,7 +368,7 @@ impl Quad4 {
     }
 }
 
-impl Element for Quad4 {
+impl Element for Quad4PlaneStrain {
     fn n_nodes(&self) -> usize {
         4
     }
@@ -368,7 +384,7 @@ impl Element for Quad4 {
             "Quad4 requires exactly 4 nodal coordinates"
         );
 
-        let d = material.constitutive_plane_stress();
+        let d = material.constitutive_plane_strain();
         let mut k = DMatrix::zeros(8, 8);
 
         // 2x2 Gauss quadrature
@@ -407,8 +423,9 @@ impl Element for Quad4 {
             "Quad4 requires 8 displacement DOFs"
         );
 
-        let d = material.constitutive_plane_stress();
+        let d = material.constitutive_plane_strain();
         let u = nalgebra::DVector::from_row_slice(displacements);
+        let nu = material.poissons_ratio;
 
         // Compute stress at each integration point
         let gauss_points = gauss_quad(2);
@@ -423,14 +440,17 @@ impl Element for Quad4 {
             // ε = B * u
             let strain = &b * &u;
 
-            // σ = D * ε
+            // σ = D * ε (in-plane stresses)
             let stress_2d = &d * Vector3::from_iterator(strain.iter().cloned());
+
+            // For plane strain, σ_z = ν(σ_x + σ_y)
+            let sigma_z = nu * (stress_2d[0] + stress_2d[1]);
 
             // Convert to 6-component stress tensor
             let stress_6 = Vector6::new(
                 stress_2d[0], // σ_xx
                 stress_2d[1], // σ_yy
-                0.0,          // σ_zz = 0 (plane stress)
+                sigma_z,      // σ_zz = ν(σ_x + σ_y) for plane strain
                 stress_2d[2], // τ_xy
                 0.0,          // τ_yz = 0
                 0.0,          // τ_xz = 0
@@ -486,18 +506,18 @@ mod tests {
         ]
     }
 
-    // === Tri3 Tests ===
+    // === Tri3PlaneStrain Tests ===
 
     #[test]
-    fn test_tri3_area_unit() {
+    fn test_tri3_plane_strain_area_unit() {
         let coords = unit_right_triangle();
-        let area = Tri3::compute_area(&coords);
+        let area = Tri3PlaneStrain::compute_area(&coords);
         assert_relative_eq!(area, 0.5, epsilon = 1e-14);
     }
 
     #[test]
-    fn test_tri3_volume() {
-        let tri = Tri3::new(0.1);
+    fn test_tri3_plane_strain_volume() {
+        let tri = Tri3PlaneStrain::new(0.1);
         let coords = unit_right_triangle();
         let vol = tri.volume(&coords);
         // Volume = Area * thickness = 0.5 * 0.1 = 0.05
@@ -505,16 +525,16 @@ mod tests {
     }
 
     #[test]
-    fn test_tri3_node_count() {
-        let tri = Tri3::new(1.0);
+    fn test_tri3_plane_strain_node_count() {
+        let tri = Tri3PlaneStrain::new(1.0);
         assert_eq!(tri.n_nodes(), 3);
         assert_eq!(tri.dofs_per_node(), 2);
         assert_eq!(tri.n_dofs(), 6);
     }
 
     #[test]
-    fn test_tri3_stiffness_symmetric() {
-        let tri = Tri3::new(1.0);
+    fn test_tri3_plane_strain_stiffness_symmetric() {
+        let tri = Tri3PlaneStrain::new(1.0);
         let coords = unit_right_triangle();
         let mat = Material::steel();
 
@@ -530,8 +550,8 @@ mod tests {
     }
 
     #[test]
-    fn test_tri3_stiffness_positive_diagonal() {
-        let tri = Tri3::new(1.0);
+    fn test_tri3_plane_strain_stiffness_positive_diagonal() {
+        let tri = Tri3PlaneStrain::new(1.0);
         let coords = unit_right_triangle();
         let mat = Material::steel();
 
@@ -549,8 +569,8 @@ mod tests {
     }
 
     #[test]
-    fn test_tri3_rigid_body_modes() {
-        let tri = Tri3::new(1.0);
+    fn test_tri3_plane_strain_rigid_body_modes() {
+        let tri = Tri3PlaneStrain::new(1.0);
         let coords = unit_right_triangle();
         let mat = Material::new(1.0, 0.3).unwrap();
 
@@ -568,8 +588,8 @@ mod tests {
     }
 
     #[test]
-    fn test_tri3_constant_strain_patch() {
-        let tri = Tri3::new(1.0);
+    fn test_tri3_plane_strain_constant_strain_patch() {
+        let tri = Tri3PlaneStrain::new(1.0);
         let coords = unit_right_triangle();
         let mat = Material::new(1e6, 0.25).unwrap();
 
@@ -583,7 +603,7 @@ mod tests {
         assert_eq!(stresses.len(), 1);
 
         let stress = &stresses[0];
-        let d = mat.constitutive_plane_stress();
+        let d = mat.constitutive_plane_strain();
 
         // Expected σ_xx = D[0,0] * ε_xx
         let expected_sigma_xx = d[(0, 0)] * 0.001;
@@ -591,15 +611,37 @@ mod tests {
 
         assert_relative_eq!(stress.0[0], expected_sigma_xx, epsilon = 1e-3);
         assert_relative_eq!(stress.0[1], expected_sigma_yy, epsilon = 1e-3);
-        assert_relative_eq!(stress.0[2], 0.0, epsilon = 1e-10); // σ_zz = 0
-        assert_relative_eq!(stress.0[3], 0.0, epsilon = 1e-3);  // τ_xy = 0
+        // For plane strain, σ_zz = ν(σ_x + σ_y) ≠ 0
+        let expected_sigma_zz = mat.poissons_ratio * (stress.0[0] + stress.0[1]);
+        assert_relative_eq!(stress.0[2], expected_sigma_zz, epsilon = 1e-3);
+        assert_relative_eq!(stress.0[3], 0.0, epsilon = 1e-3); // τ_xy = 0
     }
 
-    // === Quad4 Tests ===
+    #[test]
+    fn test_tri3_plane_strain_has_sigma_zz() {
+        // Key difference from plane stress: σ_zz ≠ 0
+        let tri = Tri3PlaneStrain::new(1.0);
+        let coords = unit_right_triangle();
+        let mat = Material::new(1e6, 0.3).unwrap();
+
+        // Apply biaxial strain
+        let displacements = [0.0, 0.0, 0.001, 0.001, 0.0, 0.001];
+
+        let stresses = tri.stress(&coords, &displacements, &mat);
+        let stress = &stresses[0];
+
+        // σ_zz should be non-zero for plane strain
+        // σ_zz = ν(σ_x + σ_y)
+        let expected_sigma_zz = mat.poissons_ratio * (stress.0[0] + stress.0[1]);
+        assert_relative_eq!(stress.0[2], expected_sigma_zz, epsilon = 1e-6);
+        assert!(stress.0[2].abs() > 1e-6, "σ_zz should be non-zero for plane strain");
+    }
+
+    // === Quad4PlaneStrain Tests ===
 
     #[test]
-    fn test_quad4_volume() {
-        let quad = Quad4::new(0.1);
+    fn test_quad4_plane_strain_volume() {
+        let quad = Quad4PlaneStrain::new(0.1);
         let coords = unit_square_quad();
         let vol = quad.volume(&coords);
         // Volume = Area * thickness = 1.0 * 0.1 = 0.1
@@ -607,16 +649,16 @@ mod tests {
     }
 
     #[test]
-    fn test_quad4_node_count() {
-        let quad = Quad4::new(1.0);
+    fn test_quad4_plane_strain_node_count() {
+        let quad = Quad4PlaneStrain::new(1.0);
         assert_eq!(quad.n_nodes(), 4);
         assert_eq!(quad.dofs_per_node(), 2);
         assert_eq!(quad.n_dofs(), 8);
     }
 
     #[test]
-    fn test_quad4_stiffness_symmetric() {
-        let quad = Quad4::new(1.0);
+    fn test_quad4_plane_strain_stiffness_symmetric() {
+        let quad = Quad4PlaneStrain::new(1.0);
         let coords = unit_square_quad();
         let mat = Material::steel();
 
@@ -632,8 +674,8 @@ mod tests {
     }
 
     #[test]
-    fn test_quad4_stiffness_positive_diagonal() {
-        let quad = Quad4::new(1.0);
+    fn test_quad4_plane_strain_stiffness_positive_diagonal() {
+        let quad = Quad4PlaneStrain::new(1.0);
         let coords = unit_square_quad();
         let mat = Material::steel();
 
@@ -651,8 +693,8 @@ mod tests {
     }
 
     #[test]
-    fn test_quad4_rigid_body_modes() {
-        let quad = Quad4::new(1.0);
+    fn test_quad4_plane_strain_rigid_body_modes() {
+        let quad = Quad4PlaneStrain::new(1.0);
         let coords = unit_square_quad();
         let mat = Material::new(1.0, 0.3).unwrap();
 
@@ -670,8 +712,8 @@ mod tests {
     }
 
     #[test]
-    fn test_quad4_constant_strain_patch() {
-        let quad = Quad4::new(1.0);
+    fn test_quad4_plane_strain_constant_strain_patch() {
+        let quad = Quad4PlaneStrain::new(1.0);
         let coords = unit_square_quad();
         let mat = Material::new(1e6, 0.25).unwrap();
 
@@ -691,7 +733,7 @@ mod tests {
         // 4 integration points
         assert_eq!(stresses.len(), 4);
 
-        let d = mat.constitutive_plane_stress();
+        let d = mat.constitutive_plane_strain();
         let expected_sigma_xx = d[(0, 0)] * 0.001;
         let expected_sigma_yy = d[(1, 0)] * 0.001;
 
@@ -699,14 +741,16 @@ mod tests {
         for stress in &stresses {
             assert_relative_eq!(stress.0[0], expected_sigma_xx, epsilon = 1e-3);
             assert_relative_eq!(stress.0[1], expected_sigma_yy, epsilon = 1e-3);
-            assert_relative_eq!(stress.0[2], 0.0, epsilon = 1e-10); // σ_zz = 0
-            assert_relative_eq!(stress.0[3], 0.0, epsilon = 1e-3);  // τ_xy = 0
+            // For plane strain, σ_zz = ν(σ_x + σ_y)
+            let expected_sigma_zz = mat.poissons_ratio * (stress.0[0] + stress.0[1]);
+            assert_relative_eq!(stress.0[2], expected_sigma_zz, epsilon = 1e-3);
+            assert_relative_eq!(stress.0[3], 0.0, epsilon = 1e-3); // τ_xy = 0
         }
     }
 
     #[test]
-    fn test_quad4_shear_strain() {
-        let quad = Quad4::new(1.0);
+    fn test_quad4_plane_strain_shear_strain() {
+        let quad = Quad4PlaneStrain::new(1.0);
         let coords = unit_square_quad();
         let mat = Material::new(1e6, 0.25).unwrap();
 
@@ -722,21 +766,47 @@ mod tests {
 
         let stresses = quad.stress(&coords, &displacements, &mat);
 
-        let d = mat.constitutive_plane_stress();
+        let d = mat.constitutive_plane_strain();
         // For pure shear, σ_xx = σ_yy = 0, τ_xy = G * γ_xy = D[2,2] * γ
         let expected_tau_xy = d[(2, 2)] * gamma;
 
         for stress in &stresses {
             assert_relative_eq!(stress.0[0], 0.0, epsilon = 1e-3); // σ_xx = 0
             assert_relative_eq!(stress.0[1], 0.0, epsilon = 1e-3); // σ_yy = 0
+            // σ_zz = ν(σ_x + σ_y) = 0 for pure shear
+            assert_relative_eq!(stress.0[2], 0.0, epsilon = 1e-3);
             assert_relative_eq!(stress.0[3], expected_tau_xy, epsilon = 1e-3); // τ_xy
         }
     }
 
     #[test]
-    fn test_quad4_non_rectangular() {
+    fn test_quad4_plane_strain_has_sigma_zz() {
+        // Key difference from plane stress: σ_zz ≠ 0 for normal strains
+        let quad = Quad4PlaneStrain::new(1.0);
+        let coords = unit_square_quad();
+        let mat = Material::new(1e6, 0.3).unwrap();
+
+        // Apply biaxial compression
+        let displacements = [
+            0.0, 0.0,
+            -0.001, 0.0,
+            -0.001, -0.001,
+            0.0, -0.001,
+        ];
+
+        let stresses = quad.stress(&coords, &displacements, &mat);
+        for stress in &stresses {
+            // σ_zz should be non-zero for plane strain
+            let expected_sigma_zz = mat.poissons_ratio * (stress.0[0] + stress.0[1]);
+            assert_relative_eq!(stress.0[2], expected_sigma_zz, epsilon = 1e-6);
+            assert!(stress.0[2].abs() > 1e-6, "σ_zz should be non-zero for plane strain");
+        }
+    }
+
+    #[test]
+    fn test_quad4_plane_strain_non_rectangular() {
         // Test with a non-rectangular quad (parallelogram)
-        let quad = Quad4::new(1.0);
+        let quad = Quad4PlaneStrain::new(1.0);
         let coords = vec![
             Point3::new(0.0, 0.0, 0.0),
             Point3::new(1.0, 0.0, 0.0),
@@ -762,7 +832,7 @@ mod tests {
     }
 
     #[test]
-    fn test_quad4_shape_functions_sum_to_one() {
+    fn test_quad4_plane_strain_shape_functions_sum_to_one() {
         // Shape functions should sum to 1 at any point
         let test_points = [
             (0.0, 0.0),
@@ -772,17 +842,17 @@ mod tests {
             (-1.0, -1.0),
         ];
         for (xi, eta) in &test_points {
-            let n = Quad4::shape_functions(*xi, *eta);
+            let n = Quad4PlaneStrain::shape_functions(*xi, *eta);
             let sum: f64 = n.iter().sum();
             assert_relative_eq!(sum, 1.0, epsilon = 1e-14);
         }
     }
 
     #[test]
-    fn test_quad4_shape_functions_at_nodes() {
+    fn test_quad4_plane_strain_shape_functions_at_nodes() {
         // Shape function N_i should be 1 at node i and 0 at other nodes
-        for (i, (xi_i, eta_i)) in Quad4::NODE_COORDS.iter().enumerate() {
-            let n = Quad4::shape_functions(*xi_i, *eta_i);
+        for (i, (xi_i, eta_i)) in Quad4PlaneStrain::NODE_COORDS.iter().enumerate() {
+            let n = Quad4PlaneStrain::shape_functions(*xi_i, *eta_i);
             for j in 0..4 {
                 if i == j {
                     assert_relative_eq!(n[j], 1.0, epsilon = 1e-14);
@@ -795,13 +865,59 @@ mod tests {
 
     #[test]
     #[should_panic(expected = "Thickness must be positive")]
-    fn test_tri3_invalid_thickness() {
-        Tri3::new(0.0);
+    fn test_tri3_plane_strain_invalid_thickness() {
+        Tri3PlaneStrain::new(0.0);
     }
 
     #[test]
     #[should_panic(expected = "Thickness must be positive")]
-    fn test_quad4_invalid_thickness() {
-        Quad4::new(-1.0);
+    fn test_quad4_plane_strain_invalid_thickness() {
+        Quad4PlaneStrain::new(-1.0);
+    }
+
+    // === Comparison Tests: Plane Strain vs Plane Stress ===
+
+    #[test]
+    fn test_plane_strain_stiffer_than_plane_stress() {
+        use crate::element::plane_stress::{Tri3 as Tri3Stress, Quad4 as Quad4Stress};
+
+        let coords_tri = unit_right_triangle();
+        let coords_quad = unit_square_quad();
+        let mat = Material::new(1e6, 0.3).unwrap();
+
+        // Plane strain should be stiffer than plane stress (constrained in z)
+        let tri_strain = Tri3PlaneStrain::new(1.0);
+        let tri_stress = Tri3Stress::new(1.0);
+
+        let k_strain = tri_strain.stiffness(&coords_tri, &mat);
+        let k_stress = tri_stress.stiffness(&coords_tri, &mat);
+
+        // Diagonal terms of plane strain should be >= plane stress
+        for i in 0..6 {
+            assert!(
+                k_strain[(i, i)] >= k_stress[(i, i)],
+                "K_strain[{0},{0}] = {1} should be >= K_stress[{0},{0}] = {2}",
+                i,
+                k_strain[(i, i)],
+                k_stress[(i, i)]
+            );
+        }
+
+        // Same for Quad4
+        let quad_strain = Quad4PlaneStrain::new(1.0);
+        let quad_stress = Quad4Stress::new(1.0);
+
+        let k_strain = quad_strain.stiffness(&coords_quad, &mat);
+        let k_stress = quad_stress.stiffness(&coords_quad, &mat);
+
+        for i in 0..8 {
+            assert!(
+                k_strain[(i, i)] >= k_stress[(i, i)],
+                "K_strain[{0},{0}] = {1} should be >= K_stress[{0},{0}] = {2}",
+                i,
+                k_strain[(i, i)],
+                k_stress[(i, i)]
+            );
+        }
     }
 }
