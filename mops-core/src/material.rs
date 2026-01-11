@@ -134,6 +134,38 @@ impl Material {
             0.0, 0.0, c44,
         )
     }
+
+    /// Axisymmetric constitutive matrix (for bodies of revolution).
+    ///
+    /// For axisymmetric problems, the strain vector has 4 components:
+    /// ε = [ε_rr, ε_zz, ε_θθ, γ_rz]^T
+    ///
+    /// Returns a 4x4 matrix D such that:
+    /// [σ_rr, σ_zz, σ_θθ, τ_rz]^T = D * [ε_rr, ε_zz, ε_θθ, γ_rz]^T
+    ///
+    /// The hoop strain ε_θθ = u_r / r is coupled to radial and axial strains
+    /// through Poisson's ratio.
+    pub fn constitutive_axisymmetric(&self) -> nalgebra::Matrix4<f64> {
+        let e = self.youngs_modulus;
+        let nu = self.poissons_ratio;
+
+        let factor = e / ((1.0 + nu) * (1.0 - 2.0 * nu));
+        let c11 = factor * (1.0 - nu);
+        let c12 = factor * nu;
+        let c44 = factor * (1.0 - 2.0 * nu) / 2.0; // = G (shear modulus)
+
+        // D matrix for axisymmetric:
+        // [σ_rr ]   [c11 c12 c12  0 ] [ε_rr ]
+        // [σ_zz ] = [c12 c11 c12  0 ] [ε_zz ]
+        // [σ_θθ ]   [c12 c12 c11  0 ] [ε_θθ ]
+        // [τ_rz ]   [ 0   0   0  c44] [γ_rz ]
+        nalgebra::Matrix4::new(
+            c11, c12, c12, 0.0,
+            c12, c11, c12, 0.0,
+            c12, c12, c11, 0.0,
+            0.0, 0.0, 0.0, c44,
+        )
+    }
 }
 
 /// Common material presets.
@@ -217,5 +249,52 @@ mod tests {
                 assert_relative_eq!(d[(i, j)], d[(j, i)], epsilon = 1e-10);
             }
         }
+    }
+
+    #[test]
+    fn test_axisymmetric_constitutive_symmetry() {
+        let mat = Material::steel();
+        let d = mat.constitutive_axisymmetric();
+        // Constitutive matrix should be symmetric
+        for i in 0..4 {
+            for j in 0..4 {
+                assert_relative_eq!(d[(i, j)], d[(j, i)], epsilon = 1e-10);
+            }
+        }
+    }
+
+    #[test]
+    fn test_axisymmetric_constitutive_positive_definite() {
+        let mat = Material::steel();
+        let d = mat.constitutive_axisymmetric();
+        // Check diagonal elements are positive
+        for i in 0..4 {
+            assert!(d[(i, i)] > 0.0, "D[{},{}] = {} should be positive", i, i, d[(i, i)]);
+        }
+    }
+
+    #[test]
+    fn test_axisymmetric_constitutive_values() {
+        // Verify specific values for steel
+        let mat = Material::steel();
+        let d = mat.constitutive_axisymmetric();
+
+        let e = 200e9;
+        let nu = 0.3;
+        let factor = e / ((1.0 + nu) * (1.0 - 2.0 * nu));
+        let c11 = factor * (1.0 - nu);
+        let c12 = factor * nu;
+        let c44 = factor * (1.0 - 2.0 * nu) / 2.0;
+
+        // Check diagonal terms
+        assert_relative_eq!(d[(0, 0)], c11, epsilon = 1e-3);
+        assert_relative_eq!(d[(1, 1)], c11, epsilon = 1e-3);
+        assert_relative_eq!(d[(2, 2)], c11, epsilon = 1e-3);
+        assert_relative_eq!(d[(3, 3)], c44, epsilon = 1e-3);
+
+        // Check off-diagonal coupling
+        assert_relative_eq!(d[(0, 1)], c12, epsilon = 1e-3);
+        assert_relative_eq!(d[(0, 2)], c12, epsilon = 1e-3);
+        assert_relative_eq!(d[(1, 2)], c12, epsilon = 1e-3);
     }
 }

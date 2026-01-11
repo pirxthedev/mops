@@ -10,6 +10,8 @@
 //! - [`tet10`] - 10-node tetrahedron (quadratic)
 //! - [`hex8`] - 8-node hexahedron (trilinear brick)
 //! - [`plane_stress`] - 2D plane stress elements (Tri3, Quad4)
+//! - [`plane_strain`] - 2D plane strain elements (Tri3, Quad4)
+//! - [`axisymmetric`] - Axisymmetric elements for bodies of revolution (Tri3, Quad4)
 //!
 //! # Element Dispatch
 //!
@@ -35,6 +37,7 @@ use crate::mesh::ElementType;
 use crate::types::{Point3, StressTensor};
 use nalgebra::DMatrix;
 
+pub mod axisymmetric;
 pub mod gauss;
 pub mod hex8;
 pub mod plane_strain;
@@ -44,8 +47,8 @@ pub mod tet4;
 
 // Element implementations (to be added)
 // pub mod hex20;
-// pub mod axisymmetric;
 
+pub use axisymmetric::{Quad4Axisymmetric, Tri3Axisymmetric};
 pub use gauss::{gauss_1d, gauss_hex, gauss_quad, gauss_tet, gauss_tri, GaussPoint};
 pub use hex8::Hex8;
 pub use plane_strain::{Quad4PlaneStrain, Tri3PlaneStrain};
