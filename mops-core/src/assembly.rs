@@ -3,7 +3,7 @@
 //! Assembles the global stiffness matrix and load vector from element contributions
 //! using Rayon for shared-memory parallelism.
 
-use crate::element::create_element;
+use crate::element::{create_element, create_element_with_thickness};
 use crate::error::Result;
 use crate::material::Material;
 use crate::mesh::Mesh;
@@ -34,10 +34,23 @@ pub struct AssembledSystem {
 }
 
 /// Assembly options.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct AssemblyOptions {
     /// Number of parallel threads (0 = auto-detect).
     pub n_threads: usize,
+    /// Thickness for 2D plane stress elements (default: 1.0).
+    /// This is used when creating 2D elements (Tri3, Tri6, Quad4, Quad8).
+    /// Ignored for 3D elements (Tet4, Tet10, Hex8, Hex20).
+    pub thickness: f64,
+}
+
+impl Default for AssemblyOptions {
+    fn default() -> Self {
+        Self {
+            n_threads: 0,
+            thickness: 1.0,
+        }
+    }
 }
 
 /// Assemble global stiffness matrix and load vector.
@@ -77,7 +90,7 @@ pub fn assemble(
     mesh: &Mesh,
     material: &Material,
     boundary_conditions: &[BoundaryCondition],
-    _options: &AssemblyOptions,
+    options: &AssemblyOptions,
 ) -> Result<AssembledSystem> {
     // Determine DOFs per node from mesh element types
     let dofs_per_node = mesh.dofs_per_node()?;
@@ -90,13 +103,21 @@ pub fn assemble(
     let nnz_estimate = n_dofs * nnz_per_dof;
     let triplet = Mutex::new(TripletMatrix::with_capacity(n_dofs, n_dofs, nnz_estimate));
 
+    // Get thickness for 2D elements from options
+    let thickness = options.thickness;
+
     // Parallel element stiffness computation and assembly
     mesh.elements()
         .par_iter()
         .enumerate()
         .for_each(|(elem_idx, connectivity)| {
             // Create element implementation from type
-            let element = create_element(connectivity.element_type);
+            // Use thickness for 2D elements, standard creation for 3D
+            let element = if connectivity.element_type.dimension() == 2 {
+                create_element_with_thickness(connectivity.element_type, thickness)
+            } else {
+                create_element(connectivity.element_type)
+            };
 
             // Get element nodal coordinates
             let coords = mesh.element_coords(elem_idx).expect("Valid element index");

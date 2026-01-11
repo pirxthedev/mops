@@ -735,14 +735,17 @@ fn solve_simple(
 ///     forces: Nx4 array of (node_index, fx, fy, fz) for nodal forces.
 ///             Each row specifies the force vector applied to a specific node.
 ///     config: Optional solver configuration
+///     thickness: Element thickness for 2D plane stress elements (default: 1.0).
+///                This is ignored for 3D elements (Tet4, Tet10, Hex8, Hex20).
 #[pyfunction]
-#[pyo3(signature = (mesh, material, constraints, forces, config=None))]
+#[pyo3(signature = (mesh, material, constraints, forces, config=None, thickness=1.0))]
 fn solve_with_forces(
     mesh: &PyMesh,
     material: &PyMaterial,
     constraints: PyReadonlyArray2<f64>,
     forces: PyReadonlyArray2<f64>,
     config: Option<&PySolverConfig>,
+    thickness: f64,
 ) -> PyResult<PyResults> {
     let core_material = material.to_core();
 
@@ -815,8 +818,19 @@ fn solve_with_forces(
         }
     }
 
-    // Assemble the system
-    let options = AssemblyOptions::default();
+    // Validate thickness
+    if thickness <= 0.0 {
+        return Err(PyValueError::new_err(format!(
+            "thickness must be positive, got {}",
+            thickness
+        )));
+    }
+
+    // Assemble the system with thickness for 2D elements
+    let options = AssemblyOptions {
+        thickness,
+        ..Default::default()
+    };
     let system = assemble(&mesh.inner, &core_material, &bcs, &options)
         .map_err(|e| PyRuntimeError::new_err(format!("Assembly error: {}", e)))?;
 

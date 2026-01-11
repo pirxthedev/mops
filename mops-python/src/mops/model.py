@@ -20,6 +20,7 @@ class ModelState:
     mesh: "Mesh"
     materials: dict[str, "Material"] = field(default_factory=dict)
     material_assignments: dict[str, str] = field(default_factory=dict)  # element group -> material
+    thickness_assignments: dict[str, float] = field(default_factory=dict)  # element group -> thickness
     constraints: list[tuple["NodeQuery", list[str], float]] = field(default_factory=list)
     loads: list[tuple["NodeQuery | FaceQuery", "Load"]] = field(default_factory=list)
     components: dict[str, "Query"] = field(default_factory=dict)
@@ -72,6 +73,16 @@ class Model:
         """Material definitions."""
         return self._state.materials
 
+    @property
+    def thickness(self) -> float | None:
+        """Element thickness for 2D plane stress elements.
+
+        Returns the first assigned thickness, or None if no thickness was specified.
+        """
+        if self._state.thickness_assignments:
+            return next(iter(self._state.thickness_assignments.values()))
+        return None
+
     def with_material(self, name: str, material: "Material") -> Model:
         """Return new Model with additional material definition.
 
@@ -89,18 +100,28 @@ class Model:
                 mesh=self._state.mesh,
                 materials=new_materials,
                 material_assignments=self._state.material_assignments,
+                thickness_assignments=self._state.thickness_assignments,
                 constraints=self._state.constraints,
                 loads=self._state.loads,
                 components=self._state.components,
             ),
         )
 
-    def assign(self, query: "ElementQuery", *, material: str) -> Model:
+    def assign(
+        self,
+        query: "ElementQuery",
+        *,
+        material: str,
+        thickness: float | None = None,
+    ) -> Model:
         """Return new Model with material assigned to selected elements.
 
         Args:
             query: Element selection query
             material: Name of material to assign (must be in materials dict)
+            thickness: Element thickness for 2D plane stress elements.
+                       Required for 2D elements, ignored for 3D elements.
+                       Default: 1.0 if not specified for 2D elements.
 
         Returns:
             New Model with material assignment
@@ -108,9 +129,17 @@ class Model:
         if material not in self._state.materials:
             raise ValueError(f"Unknown material: {material}. Available: {list(self._state.materials.keys())}")
 
+        if thickness is not None and thickness <= 0:
+            raise ValueError(f"thickness must be positive, got {thickness}")
+
         # For now, use query repr as key (will be refined with proper query evaluation)
         query_key = repr(query)
         new_assignments = {**self._state.material_assignments, query_key: material}
+
+        # Update thickness assignments if specified
+        new_thickness = {**self._state.thickness_assignments}
+        if thickness is not None:
+            new_thickness[query_key] = thickness
 
         return Model(
             mesh=self._state.mesh,
@@ -118,6 +147,7 @@ class Model:
                 mesh=self._state.mesh,
                 materials=self._state.materials,
                 material_assignments=new_assignments,
+                thickness_assignments=new_thickness,
                 constraints=self._state.constraints,
                 loads=self._state.loads,
                 components=self._state.components,
@@ -153,6 +183,7 @@ class Model:
                 mesh=self._state.mesh,
                 materials=self._state.materials,
                 material_assignments=self._state.material_assignments,
+                thickness_assignments=self._state.thickness_assignments,
                 constraints=new_constraints,
                 loads=self._state.loads,
                 components=self._state.components,
@@ -177,6 +208,7 @@ class Model:
                 mesh=self._state.mesh,
                 materials=self._state.materials,
                 material_assignments=self._state.material_assignments,
+                thickness_assignments=self._state.thickness_assignments,
                 constraints=self._state.constraints,
                 loads=new_loads,
                 components=self._state.components,
@@ -201,6 +233,7 @@ class Model:
                 mesh=self._state.mesh,
                 materials=self._state.materials,
                 material_assignments=self._state.material_assignments,
+                thickness_assignments=self._state.thickness_assignments,
                 constraints=self._state.constraints,
                 loads=self._state.loads,
                 components=new_components,
@@ -322,6 +355,13 @@ class Model:
 
         forces = np.array(force_rows, dtype=np.float64)
 
+        # Determine thickness for 2D elements
+        # Use the first assigned thickness, or default to 1.0
+        if self._state.thickness_assignments:
+            thickness = next(iter(self._state.thickness_assignments.values()))
+        else:
+            thickness = 1.0  # Default thickness for 2D plane stress elements
+
         # Pass the underlying Rust mesh to the solver
         mesh = self._state.mesh
         core_mesh = mesh._inner if hasattr(mesh, "_inner") else mesh
@@ -332,6 +372,7 @@ class Model:
             constraints,
             forces,
             config,
+            thickness,
         )
 
     def __repr__(self) -> str:
