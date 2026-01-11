@@ -1357,6 +1357,78 @@ class Results:
 
         return ScalarElementField(data=self.hydrostatic_stress())
 
+    def _get_solve_stats(self) -> dict:
+        """Get solver statistics as a dictionary.
+
+        Returns stats from core results if available, otherwise returns
+        defaults. For HDF5-backed results, returns stats from the file.
+        """
+        if self._core is not None:
+            stats = self._core.solve_stats
+            if stats is not None:
+                return stats.to_dict()
+
+        if self._lazy and self._h5file is not None:
+            # Read from HDF5
+            solver_grp = self._h5file.get("/solution/solver")
+            if solver_grp is not None:
+                return {
+                    "solver": solver_grp["type"][()].decode() if "type" in solver_grp else "unknown",
+                    "total_time": float(solver_grp["total_time"][()]) if "total_time" in solver_grp else 0.0,
+                    "setup_time": float(solver_grp["setup_time"][()]) if "setup_time" in solver_grp else 0.0,
+                    "factorization_time": float(solver_grp["factorization_time"][()]) if "factorization_time" in solver_grp else 0.0,
+                    "solve_time": float(solver_grp["solve_time"][()]) if "solve_time" in solver_grp else 0.0,
+                    "n_dofs": int(solver_grp["n_dofs"][()]) if "n_dofs" in solver_grp else 0,
+                    "n_nonzeros": int(solver_grp["n_nonzeros"][()]) if "n_nonzeros" in solver_grp else 0,
+                    "iterations": int(solver_grp["iterations"][()]) if "iterations" in solver_grp else 0,
+                    "residual": float(solver_grp["residual_norm"][()]) if "residual_norm" in solver_grp else 0.0,
+                }
+
+        # Default empty stats
+        return {
+            "solver": "unknown",
+            "total_time": 0.0,
+            "setup_time": 0.0,
+            "factorization_time": 0.0,
+            "solve_time": 0.0,
+            "n_dofs": 0,
+            "n_nonzeros": 0,
+            "iterations": 0,
+            "residual": 0.0,
+        }
+
+    @property
+    def solve_stats(self) -> dict | None:
+        """Get solver performance statistics.
+
+        Returns a dictionary with solver timing and iteration info:
+        - solver: Solver name used
+        - total_time: Total wall-clock time in seconds
+        - setup_time: Time for symbolic analysis/setup
+        - factorization_time: Time for numerical factorization (direct solvers)
+        - solve_time: Time for back-substitution/solve phase
+        - n_dofs: Number of DOFs in the system
+        - n_nonzeros: Number of non-zeros in the matrix
+        - iterations: Number of iterations (iterative solvers, 0 for direct)
+        - residual: Final residual norm (iterative solvers, 0 for direct)
+
+        Returns:
+            Dictionary with solver stats, or None if not available.
+        """
+        if self._core is not None:
+            stats = self._core.solve_stats
+            if stats is not None:
+                return stats.to_dict()
+            return None
+
+        if self._lazy and self._h5file is not None:
+            solver_grp = self._h5file.get("/solution/solver")
+            if solver_grp is not None:
+                return self._get_solve_stats()
+            return None
+
+        return None
+
     def save(
         self,
         path: str | Path,
@@ -1441,14 +1513,18 @@ class Results:
                 chunks=(min(1000, len(disp)), 3),
             )
 
-            # Solver metadata (placeholder - to be enhanced with actual solver stats)
+            # Solver metadata
             solver_grp = sol.create_group("solver")
-            solver_grp.create_dataset("type", data="cholesky")
-            solver_grp.create_dataset("iterations", data=0)
-            solver_grp.create_dataset("residual_norm", data=0.0)
-            solver_grp.create_dataset("factorization_time", data=0.0)
-            solver_grp.create_dataset("solve_time", data=0.0)
-            solver_grp.create_dataset("peak_memory_mb", data=0.0)
+            stats = self._get_solve_stats()
+            solver_grp.create_dataset("type", data=stats.get("solver", "unknown"))
+            solver_grp.create_dataset("total_time", data=stats.get("total_time", 0.0))
+            solver_grp.create_dataset("setup_time", data=stats.get("setup_time", 0.0))
+            solver_grp.create_dataset("factorization_time", data=stats.get("factorization_time", 0.0))
+            solver_grp.create_dataset("solve_time", data=stats.get("solve_time", 0.0))
+            solver_grp.create_dataset("n_dofs", data=stats.get("n_dofs", 0))
+            solver_grp.create_dataset("n_nonzeros", data=stats.get("n_nonzeros", 0))
+            solver_grp.create_dataset("iterations", data=stats.get("iterations", 0))
+            solver_grp.create_dataset("residual_norm", data=stats.get("residual", 0.0))
 
             # Stress group
             stress_grp = f.create_group("stress")

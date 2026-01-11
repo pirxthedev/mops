@@ -41,6 +41,36 @@ pub trait Solver: Send + Sync {
     /// Solution vector (u)
     fn solve(&self, matrix: &CsrMatrix, rhs: &[f64]) -> Result<Vec<f64>>;
 
+    /// Solve the linear system Ax = b with statistics.
+    ///
+    /// This is the preferred method when performance metadata is needed.
+    /// Default implementation calls `solve()` and returns minimal stats.
+    ///
+    /// # Arguments
+    ///
+    /// * `matrix` - System matrix (K)
+    /// * `rhs` - Right-hand side vector (f)
+    ///
+    /// # Returns
+    ///
+    /// Tuple of (solution vector, solver statistics)
+    fn solve_with_stats(&self, matrix: &CsrMatrix, rhs: &[f64]) -> Result<(Vec<f64>, SolveStats)> {
+        let start = std::time::Instant::now();
+        let solution = self.solve(matrix, rhs)?;
+        let elapsed = start.elapsed().as_secs_f64();
+        Ok((
+            solution,
+            SolveStats {
+                solver: self.name().to_string(),
+                total_time_seconds: elapsed,
+                solve_time_seconds: elapsed,
+                n_dofs: matrix.nrows(),
+                n_nonzeros: matrix.nnz(),
+                ..Default::default()
+            },
+        ))
+    }
+
     /// Solver name for diagnostics.
     fn name(&self) -> &str;
 }
@@ -86,17 +116,94 @@ impl Default for SolverConfig {
     }
 }
 
-/// Solution statistics.
+/// Solution statistics including timing and performance metadata.
+///
+/// This struct is returned alongside the solution vector to provide
+/// detailed information about the solve process for logging, HDF5 storage,
+/// and performance analysis.
 #[derive(Debug, Clone)]
 pub struct SolveStats {
     /// Solver name used.
     pub solver: String,
-    /// Number of iterations (for iterative solvers).
+    /// Number of iterations (for iterative solvers, None for direct).
     pub iterations: Option<usize>,
-    /// Final residual norm (for iterative solvers).
+    /// Final residual norm (for iterative solvers, None for direct).
     pub residual: Option<f64>,
-    /// Wall-clock time in seconds.
-    pub time_seconds: f64,
+    /// Total wall-clock time in seconds (setup + factorization + solve).
+    pub total_time_seconds: f64,
+    /// Time spent on symbolic analysis/setup (seconds).
+    pub setup_time_seconds: f64,
+    /// Time spent on numerical factorization (seconds, for direct solvers).
+    pub factorization_time_seconds: f64,
+    /// Time spent on back-substitution/solve phase (seconds).
+    pub solve_time_seconds: f64,
+    /// Number of DOFs in the system.
+    pub n_dofs: usize,
+    /// Number of non-zeros in the matrix.
+    pub n_nonzeros: usize,
+}
+
+impl SolveStats {
+    /// Create a new SolveStats for a direct solver.
+    pub fn direct(
+        solver: impl Into<String>,
+        n_dofs: usize,
+        n_nonzeros: usize,
+        setup_time: f64,
+        factorization_time: f64,
+        solve_time: f64,
+    ) -> Self {
+        Self {
+            solver: solver.into(),
+            iterations: None,
+            residual: None,
+            total_time_seconds: setup_time + factorization_time + solve_time,
+            setup_time_seconds: setup_time,
+            factorization_time_seconds: factorization_time,
+            solve_time_seconds: solve_time,
+            n_dofs,
+            n_nonzeros,
+        }
+    }
+
+    /// Create a new SolveStats for an iterative solver.
+    pub fn iterative(
+        solver: impl Into<String>,
+        n_dofs: usize,
+        n_nonzeros: usize,
+        setup_time: f64,
+        solve_time: f64,
+        iterations: usize,
+        residual: f64,
+    ) -> Self {
+        Self {
+            solver: solver.into(),
+            iterations: Some(iterations),
+            residual: Some(residual),
+            total_time_seconds: setup_time + solve_time,
+            setup_time_seconds: setup_time,
+            factorization_time_seconds: 0.0,
+            solve_time_seconds: solve_time,
+            n_dofs,
+            n_nonzeros,
+        }
+    }
+}
+
+impl Default for SolveStats {
+    fn default() -> Self {
+        Self {
+            solver: String::new(),
+            iterations: None,
+            residual: None,
+            total_time_seconds: 0.0,
+            setup_time_seconds: 0.0,
+            factorization_time_seconds: 0.0,
+            solve_time_seconds: 0.0,
+            n_dofs: 0,
+            n_nonzeros: 0,
+        }
+    }
 }
 
 /// Placeholder direct solver using nalgebra dense factorization.
@@ -242,9 +349,20 @@ impl Default for FaerCholeskySolver {
 
 impl Solver for FaerCholeskySolver {
     fn solve(&self, matrix: &CsrMatrix, rhs: &[f64]) -> Result<Vec<f64>> {
+        self.solve_with_stats(matrix, rhs).map(|(solution, _)| solution)
+    }
+
+    fn solve_with_stats(&self, matrix: &CsrMatrix, rhs: &[f64]) -> Result<(Vec<f64>, SolveStats)> {
+        use std::time::Instant;
+
         let n = matrix.nrows();
+        let nnz = matrix.nnz();
+
         if n == 0 {
-            return Ok(vec![]);
+            return Ok((
+                vec![],
+                SolveStats::direct(self.name(), 0, 0, 0.0, 0.0, 0.0),
+            ));
         }
 
         if n != matrix.ncols() {
@@ -255,15 +373,18 @@ impl Solver for FaerCholeskySolver {
             return Err(Error::Solver("RHS size mismatch".into()));
         }
 
-        // Convert to faer sparse column format
+        // Phase 1: Convert to faer sparse column format (setup)
+        let setup_start = Instant::now();
         let csc = csr_to_faer_csc(matrix);
         let csc_ref = csc.as_ref();
 
         // Perform symbolic analysis
         let symbolic = SymbolicLlt::try_new(csc_ref.symbolic(), faer::Side::Lower)
             .map_err(|_| Error::Solver("Symbolic Cholesky analysis failed".into()))?;
+        let setup_time = setup_start.elapsed().as_secs_f64();
 
-        // Numerical factorization
+        // Phase 2: Numerical factorization
+        let factor_start = Instant::now();
         let llt = Llt::try_new_with_symbolic(symbolic, csc_ref, faer::Side::Lower).map_err(
             |e| match e {
                 SparseLltError::Generic(err) => {
@@ -277,13 +398,20 @@ impl Solver for FaerCholeskySolver {
                 }
             },
         )?;
+        let factor_time = factor_start.elapsed().as_secs_f64();
 
-        // Solve the system
+        // Phase 3: Solve (forward/back substitution)
+        let solve_start = Instant::now();
         let mut x = faer::Mat::from_fn(n, 1, |i, _| rhs[i]);
         llt.solve_in_place(x.as_mut());
+        let solve_time = solve_start.elapsed().as_secs_f64();
 
         // Extract solution
-        Ok((0..n).map(|i| x[(i, 0)]).collect())
+        let solution: Vec<f64> = (0..n).map(|i| x[(i, 0)]).collect();
+
+        let stats = SolveStats::direct(self.name(), n, nnz, setup_time, factor_time, solve_time);
+
+        Ok((solution, stats))
     }
 
     fn name(&self) -> &str {
@@ -508,9 +636,20 @@ mod iterative {
 
     impl Solver for IterativeSolver {
         fn solve(&self, matrix: &CsrMatrix, rhs: &[f64]) -> Result<Vec<f64>> {
+            self.solve_with_stats(matrix, rhs).map(|(solution, _)| solution)
+        }
+
+        fn solve_with_stats(&self, matrix: &CsrMatrix, rhs: &[f64]) -> Result<(Vec<f64>, SolveStats)> {
+            use std::time::Instant;
+
             let n = matrix.nrows();
+            let nnz = matrix.nnz();
+
             if n == 0 {
-                return Ok(vec![]);
+                return Ok((
+                    vec![],
+                    SolveStats::iterative(self.name(), 0, 0, 0.0, 0.0, 0, 0.0),
+                ));
             }
 
             if n != matrix.ncols() {
@@ -520,6 +659,9 @@ mod iterative {
             if n != rhs.len() {
                 return Err(Error::Solver("RHS size mismatch".into()));
             }
+
+            // Phase 1: Setup (conversion, preconditioner construction)
+            let setup_start = Instant::now();
 
             // Convert to kryst CSR format
             let kryst_csr = to_kryst_csr(matrix);
@@ -547,14 +689,31 @@ mod iterative {
             // Setup (preconditioner factorization)
             ksp.setup()
                 .map_err(|e| Error::Solver(format!("Solver setup failed: {}", e)))?;
+            let setup_time = setup_start.elapsed().as_secs_f64();
 
-            // Solve
+            // Phase 2: Solve (iterative)
+            let solve_start = Instant::now();
             let mut solution = vec![0.0; n];
-            let _stats = ksp
+            let ksp_stats = ksp
                 .solve(rhs, &mut solution)
                 .map_err(|e| Error::Solver(format!("Iterative solve failed: {}", e)))?;
+            let solve_time = solve_start.elapsed().as_secs_f64();
 
-            Ok(solution)
+            // Extract iteration count and residual from kryst stats
+            let iterations = ksp_stats.iterations;
+            let residual = ksp_stats.residual_norm;
+
+            let stats = SolveStats::iterative(
+                self.name(),
+                n,
+                nnz,
+                setup_time,
+                solve_time,
+                iterations,
+                residual,
+            );
+
+            Ok((solution, stats))
         }
 
         fn name(&self) -> &str {

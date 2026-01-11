@@ -30,7 +30,8 @@ pub use error::{Error, Result};
 pub use material::Material;
 pub use mesh::Mesh;
 pub use solver::{
-    select_solver, CachedCholeskySolver, FaerCholeskySolver, Solver, SolverConfig, SolverType,
+    select_solver, CachedCholeskySolver, FaerCholeskySolver, SolveStats, Solver, SolverConfig,
+    SolverType,
 };
 
 #[cfg(feature = "iterative")]

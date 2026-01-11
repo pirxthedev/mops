@@ -707,3 +707,124 @@ class TestResultsDerivedRoundTrip:
             assert "/stress/element_tresca" in f
             assert "/stress/element_hydrostatic" in f
             assert "/stress/element_intensity" in f
+
+
+# =============================================================================
+# Solver Statistics Tests
+# =============================================================================
+
+
+class TestResultsSolverStats:
+    """Test solver statistics (timing, iterations) on Results."""
+
+    def test_solve_stats_available(self, solved_results):
+        """Solver stats should be available on results from solver."""
+        stats = solved_results.solve_stats
+        assert stats is not None
+        assert isinstance(stats, dict)
+
+    def test_solve_stats_has_solver_name(self, solved_results):
+        """Stats should include solver name."""
+        stats = solved_results.solve_stats
+        assert "solver" in stats
+        assert "cholesky" in stats["solver"].lower() or "faer" in stats["solver"].lower()
+
+    def test_solve_stats_has_timing(self, solved_results):
+        """Stats should include timing information."""
+        stats = solved_results.solve_stats
+        assert "total_time" in stats
+        assert "setup_time" in stats
+        assert "factorization_time" in stats
+        assert "solve_time" in stats
+
+        # All times should be non-negative
+        assert stats["total_time"] >= 0
+        assert stats["setup_time"] >= 0
+        assert stats["factorization_time"] >= 0
+        assert stats["solve_time"] >= 0
+
+    def test_solve_stats_has_problem_size(self, solved_results):
+        """Stats should include problem size information."""
+        stats = solved_results.solve_stats
+        assert "n_dofs" in stats
+        assert "n_nonzeros" in stats
+        assert stats["n_dofs"] > 0
+        assert stats["n_nonzeros"] > 0
+
+    def test_solve_stats_direct_no_iterations(self, solved_results):
+        """Direct solver should not have iteration count."""
+        stats = solved_results.solve_stats
+        # For direct solvers, iterations should not be present or be 0/None
+        if "iterations" in stats:
+            assert stats["iterations"] is None or stats["iterations"] == 0
+
+    def test_solve_stats_total_time_consistency(self, solved_results):
+        """Total time should be approximately sum of phases."""
+        stats = solved_results.solve_stats
+        component_sum = (
+            stats["setup_time"]
+            + stats["factorization_time"]
+            + stats["solve_time"]
+        )
+        # Allow some tolerance for measurement overhead
+        # Total time should be close to or slightly greater than component sum
+        assert stats["total_time"] >= component_sum * 0.9
+
+
+class TestResultsSolverStatsRoundTrip:
+    """Test solver stats survive HDF5 round-trip."""
+
+    def test_solve_stats_saved_to_hdf5(self, solved_results, temp_h5_path):
+        """Solver stats should be saved to HDF5."""
+        import h5py
+
+        solved_results.save(temp_h5_path)
+
+        with h5py.File(temp_h5_path, "r") as f:
+            assert "/solution/solver" in f
+            solver_grp = f["/solution/solver"]
+            assert "type" in solver_grp
+            assert "total_time" in solver_grp
+            assert "setup_time" in solver_grp
+            assert "factorization_time" in solver_grp
+            assert "solve_time" in solver_grp
+            assert "n_dofs" in solver_grp
+            assert "n_nonzeros" in solver_grp
+
+    def test_solve_stats_roundtrip(self, simple_model, solved_results, temp_h5_path):
+        """Solver stats should survive round-trip."""
+        original_stats = solved_results.solve_stats
+
+        solved_results.save(temp_h5_path, model=simple_model)
+
+        with Results.load(temp_h5_path) as loaded:
+            loaded_stats = loaded.solve_stats
+            assert loaded_stats is not None
+
+            # Check key fields match
+            assert loaded_stats["solver"] == original_stats["solver"]
+            np.testing.assert_allclose(
+                loaded_stats["total_time"], original_stats["total_time"], rtol=1e-10
+            )
+            assert loaded_stats["n_dofs"] == original_stats["n_dofs"]
+            assert loaded_stats["n_nonzeros"] == original_stats["n_nonzeros"]
+
+    def test_solve_stats_timing_preserved(self, solved_results, temp_h5_path):
+        """Timing values should be correctly preserved."""
+        import h5py
+
+        original_stats = solved_results.solve_stats
+        solved_results.save(temp_h5_path)
+
+        with h5py.File(temp_h5_path, "r") as f:
+            solver_grp = f["/solution/solver"]
+            np.testing.assert_allclose(
+                float(solver_grp["total_time"][()]),
+                original_stats["total_time"],
+                rtol=1e-10
+            )
+            np.testing.assert_allclose(
+                float(solver_grp["factorization_time"][()]),
+                original_stats["factorization_time"],
+                rtol=1e-10
+            )

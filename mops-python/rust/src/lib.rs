@@ -12,7 +12,7 @@ use mops_core::assembly::{assemble, AssemblyOptions, BoundaryCondition};
 use mops_core::element::create_element;
 use mops_core::material::Material as CoreMaterial;
 use mops_core::mesh::{ElementType, Mesh};
-use mops_core::solver::{FaerCholeskySolver, Solver, SolverConfig, SolverType};
+use mops_core::solver::{FaerCholeskySolver, SolveStats, Solver, SolverConfig, SolverType};
 use mops_core::stress::{recover_stresses, StressField};
 use mops_core::types::Point3;
 
@@ -271,6 +271,117 @@ impl PySolverConfig {
     }
 }
 
+/// Solver performance statistics.
+#[pyclass(name = "SolveStats")]
+#[derive(Clone)]
+pub struct PySolveStats {
+    inner: SolveStats,
+}
+
+#[pymethods]
+impl PySolveStats {
+    /// Solver name used.
+    #[getter]
+    fn solver(&self) -> &str {
+        &self.inner.solver
+    }
+
+    /// Number of iterations (for iterative solvers, None for direct).
+    #[getter]
+    fn iterations(&self) -> Option<usize> {
+        self.inner.iterations
+    }
+
+    /// Final residual norm (for iterative solvers, None for direct).
+    #[getter]
+    fn residual(&self) -> Option<f64> {
+        self.inner.residual
+    }
+
+    /// Total wall-clock time in seconds.
+    #[getter]
+    fn total_time(&self) -> f64 {
+        self.inner.total_time_seconds
+    }
+
+    /// Time spent on symbolic analysis/setup (seconds).
+    #[getter]
+    fn setup_time(&self) -> f64 {
+        self.inner.setup_time_seconds
+    }
+
+    /// Time spent on numerical factorization (seconds, for direct solvers).
+    #[getter]
+    fn factorization_time(&self) -> f64 {
+        self.inner.factorization_time_seconds
+    }
+
+    /// Time spent on back-substitution/solve phase (seconds).
+    #[getter]
+    fn solve_time(&self) -> f64 {
+        self.inner.solve_time_seconds
+    }
+
+    /// Number of DOFs in the system.
+    #[getter]
+    fn n_dofs(&self) -> usize {
+        self.inner.n_dofs
+    }
+
+    /// Number of non-zeros in the matrix.
+    #[getter]
+    fn n_nonzeros(&self) -> usize {
+        self.inner.n_nonzeros
+    }
+
+    fn __repr__(&self) -> String {
+        if let Some(iters) = self.inner.iterations {
+            format!(
+                "SolveStats(solver='{}', iterations={}, residual={:.2e}, total_time={:.3}s)",
+                self.inner.solver,
+                iters,
+                self.inner.residual.unwrap_or(0.0),
+                self.inner.total_time_seconds
+            )
+        } else {
+            format!(
+                "SolveStats(solver='{}', total_time={:.3}s, factor_time={:.3}s, solve_time={:.3}s)",
+                self.inner.solver,
+                self.inner.total_time_seconds,
+                self.inner.factorization_time_seconds,
+                self.inner.solve_time_seconds
+            )
+        }
+    }
+
+    /// Convert to dictionary for easy serialization.
+    fn to_dict(&self) -> HashMap<String, PyObject> {
+        Python::with_gil(|py| {
+            let mut dict = HashMap::new();
+            dict.insert("solver".to_string(), self.inner.solver.clone().into_pyobject(py).unwrap().into_any().unbind());
+            dict.insert("total_time".to_string(), self.inner.total_time_seconds.into_pyobject(py).unwrap().into_any().unbind());
+            dict.insert("setup_time".to_string(), self.inner.setup_time_seconds.into_pyobject(py).unwrap().into_any().unbind());
+            dict.insert("factorization_time".to_string(), self.inner.factorization_time_seconds.into_pyobject(py).unwrap().into_any().unbind());
+            dict.insert("solve_time".to_string(), self.inner.solve_time_seconds.into_pyobject(py).unwrap().into_any().unbind());
+            dict.insert("n_dofs".to_string(), self.inner.n_dofs.into_pyobject(py).unwrap().into_any().unbind());
+            dict.insert("n_nonzeros".to_string(), self.inner.n_nonzeros.into_pyobject(py).unwrap().into_any().unbind());
+            if let Some(iters) = self.inner.iterations {
+                dict.insert("iterations".to_string(), iters.into_pyobject(py).unwrap().into_any().unbind());
+            }
+            if let Some(res) = self.inner.residual {
+                dict.insert("residual".to_string(), res.into_pyobject(py).unwrap().into_any().unbind());
+            }
+            dict
+        })
+    }
+}
+
+impl From<SolveStats> for PySolveStats {
+    fn from(inner: SolveStats) -> Self {
+        Self { inner }
+    }
+}
+
 /// FEA solution results.
 #[pyclass(name = "Results")]
 pub struct PyResults {
@@ -281,6 +392,8 @@ pub struct PyResults {
     element_stresses: Vec<[f64; 6]>,
     /// Von Mises stress per element.
     von_mises_stresses: Vec<f64>,
+    /// Solver performance statistics.
+    solve_stats: Option<PySolveStats>,
 }
 
 #[pymethods]
@@ -375,13 +488,28 @@ impl PyResults {
         Ok(self.von_mises_stresses[element_id])
     }
 
+    /// Get solver performance statistics.
+    ///
+    /// Returns timing, iteration counts, and other performance metrics
+    /// from the linear solver.
+    #[getter]
+    fn solve_stats(&self) -> Option<PySolveStats> {
+        self.solve_stats.clone()
+    }
+
     fn __repr__(&self) -> String {
+        let time_str = if let Some(ref stats) = self.solve_stats {
+            format!(", solve_time={:.3}s", stats.inner.total_time_seconds)
+        } else {
+            String::new()
+        };
         format!(
-            "Results(n_nodes={}, n_elements={}, max_disp={:.3e}, max_vm={:.3e})",
+            "Results(n_nodes={}, n_elements={}, max_disp={:.3e}, max_vm={:.3e}{})",
             self.n_nodes,
             self.n_elements,
             self.max_displacement(),
-            self.max_von_mises()
+            self.max_von_mises(),
+            time_str
         )
     }
 }
@@ -486,6 +614,7 @@ fn solve_simple(
             n_elements: mesh.inner.n_elements(),
             element_stresses,
             von_mises_stresses,
+            solve_stats: None, // No solver used, all DOFs constrained
         });
     }
 
@@ -520,10 +649,10 @@ fn solve_simple(
 
     let reduced_matrix = reduced_triplet.to_csr();
 
-    // Solve the reduced system
+    // Solve the reduced system with statistics
     let solver = FaerCholeskySolver::new();
-    let reduced_solution = solver
-        .solve(&reduced_matrix, &reduced_rhs)
+    let (reduced_solution, solve_stats) = solver
+        .solve_with_stats(&reduced_matrix, &reduced_rhs)
         .map_err(|e| PyRuntimeError::new_err(format!("Solver error: {}", e)))?;
 
     // Reconstruct full displacement vector
@@ -545,6 +674,7 @@ fn solve_simple(
         n_elements: mesh.inner.n_elements(),
         element_stresses,
         von_mises_stresses,
+        solve_stats: Some(solve_stats.into()),
     })
 }
 
@@ -793,6 +923,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyMaterial>()?;
     m.add_class::<PyMesh>()?;
     m.add_class::<PySolverConfig>()?;
+    m.add_class::<PySolveStats>()?;
     m.add_class::<PyResults>()?;
     m.add_function(wrap_pyfunction!(solve_simple, m)?)?;
     m.add_function(wrap_pyfunction!(element_stiffness, m)?)?;
