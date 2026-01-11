@@ -11,8 +11,16 @@ Example::
     # Select nodes in a range
     Nodes.where(x__gt=0, x__lt=10)
 
-    # Combine queries
+    # Combine queries with methods
     Nodes.where(x=0).union(Nodes.where(x=100))
+    Nodes.where(x__gt=0).intersect(Nodes.where(y__gt=0))
+    Nodes.where(x__between=(0, 100)).subtract(Nodes.where(y=0))
+
+    # Or use operators for cleaner syntax
+    Nodes.where(x=0) | Nodes.where(x=100)     # union
+    Nodes.where(x__gt=0) & Nodes.where(y__gt=0)  # intersection
+    Nodes.where(x__between=(0, 100)) - Nodes.where(y=0)  # subtract
+    ~Nodes.where(x=0)  # invert (all nodes NOT at x=0)
 
     # Use named components
     model = model.define_component("fixed_face", Nodes.where(x=0))
@@ -48,12 +56,62 @@ class Query(ABC):
         ...
 
     def union(self, other: Query) -> Query:
-        """Union of two queries."""
+        """Union of two queries (A ∪ B).
+
+        Args:
+            other: Query to union with
+
+        Returns:
+            Query that selects items in either query
+        """
         return UnionQuery(self, other)
 
+    def intersect(self, other: Query) -> Query:
+        """Intersection of two queries (A ∩ B).
+
+        Args:
+            other: Query to intersect with
+
+        Returns:
+            Query that selects items in both queries
+        """
+        return IntersectQuery(self, other)
+
     def subtract(self, other: Query) -> Query:
-        """Set difference of two queries."""
+        """Set difference of two queries (A - B).
+
+        Args:
+            other: Query to subtract
+
+        Returns:
+            Query that selects items in self but not in other
+        """
         return SubtractQuery(self, other)
+
+    def invert(self) -> Query:
+        """Invert query to select everything NOT in current selection (~A).
+
+        Returns:
+            Query that selects items not in the current query
+        """
+        return InvertQuery(self)
+
+    # Operator overloads for more natural syntax
+    def __or__(self, other: Query) -> Query:
+        """Union operator: q1 | q2"""
+        return self.union(other)
+
+    def __and__(self, other: Query) -> Query:
+        """Intersection operator: q1 & q2"""
+        return self.intersect(other)
+
+    def __sub__(self, other: Query) -> Query:
+        """Subtract operator: q1 - q2"""
+        return self.subtract(other)
+
+    def __invert__(self) -> Query:
+        """Invert operator: ~q"""
+        return self.invert()
 
     @property
     def component_name(self) -> str | None:
@@ -76,7 +134,7 @@ class UnionQuery(Query):
 
 @dataclass
 class SubtractQuery(Query):
-    """Set difference of two queries."""
+    """Set difference of two queries (A - B)."""
 
     left: Query
     right: Query
@@ -85,6 +143,102 @@ class SubtractQuery(Query):
         left_indices = set(self.left.evaluate(mesh, components))
         right_indices = set(self.right.evaluate(mesh, components))
         return np.array(sorted(left_indices - right_indices), dtype=np.int64)
+
+
+@dataclass
+class IntersectQuery(Query):
+    """Intersection of two queries (A ∩ B)."""
+
+    left: Query
+    right: Query
+
+    def evaluate(self, mesh: "Mesh", components: dict[str, "Query"] | None = None) -> np.ndarray:
+        left_indices = set(self.left.evaluate(mesh, components))
+        right_indices = set(self.right.evaluate(mesh, components))
+        return np.array(sorted(left_indices & right_indices), dtype=np.int64)
+
+
+@dataclass
+class InvertQuery(Query):
+    """Inversion of a query (~A).
+
+    Selects all items NOT in the inner query. The universe (all possible items)
+    is determined by the inner query's type:
+    - NodeQuery: all nodes in mesh
+    - ElementQuery: all elements in mesh
+    - FaceQuery: all faces in mesh
+    """
+
+    inner: Query
+
+    def evaluate(self, mesh: "Mesh", components: dict[str, "Query"] | None = None) -> np.ndarray:
+        inner_indices = set(self.inner.evaluate(mesh, components))
+
+        # Determine the universe based on inner query type
+        if isinstance(self.inner, (NodeQuery, UnionQuery, SubtractQuery, IntersectQuery, InvertQuery)):
+            # For node queries (or composed queries), use all node indices
+            # Need to detect the base query type
+            universe = self._get_universe(mesh, components)
+        else:
+            universe = self._get_universe(mesh, components)
+
+        return np.array(sorted(universe - inner_indices), dtype=np.int64)
+
+    def _get_universe(self, mesh: "Mesh", components: dict[str, "Query"] | None = None) -> set[int]:
+        """Determine the universe of all possible indices based on inner query type."""
+        # Walk down to find the base query type
+        base_query = self._find_base_query(self.inner)
+
+        if isinstance(base_query, NodeQuery):
+            # Import here to avoid circular import issues
+            try:
+                n_nodes = mesh.n_nodes
+            except AttributeError:
+                # Handle Python Mesh wrapper
+                if hasattr(mesh, "_core"):
+                    n_nodes = mesh._core.n_nodes
+                else:
+                    n_nodes = mesh.n_nodes
+            return set(range(n_nodes))
+        elif isinstance(base_query, ElementQuery):
+            try:
+                n_elements = mesh.n_elements
+            except AttributeError:
+                if hasattr(mesh, "_core"):
+                    n_elements = mesh._core.n_elements
+                else:
+                    n_elements = mesh.n_elements
+            return set(range(n_elements))
+        elif isinstance(base_query, FaceQuery):
+            # For faces, get all faces from mesh
+            from mops.mesh import Mesh as PythonMesh
+            if hasattr(mesh, "get_all_faces"):
+                all_faces = mesh.get_all_faces()
+                # Convert face array to set of tuples for comparison
+                # Note: FaceQuery returns Nx2 array, but indices are linear for set ops
+                return set(range(len(all_faces)))
+            else:
+                raise ValueError("Cannot invert FaceQuery: mesh doesn't support get_all_faces()")
+        else:
+            # Fallback: assume node query
+            try:
+                n_nodes = mesh.n_nodes
+            except AttributeError:
+                if hasattr(mesh, "_core"):
+                    n_nodes = mesh._core.n_nodes
+                else:
+                    n_nodes = mesh.n_nodes
+            return set(range(n_nodes))
+
+    def _find_base_query(self, query: Query) -> Query:
+        """Walk down composite queries to find the base query type."""
+        if isinstance(query, (UnionQuery, SubtractQuery, IntersectQuery)):
+            # Check left branch first
+            return self._find_base_query(query.left)
+        elif isinstance(query, InvertQuery):
+            return self._find_base_query(query.inner)
+        else:
+            return query
 
 
 @dataclass

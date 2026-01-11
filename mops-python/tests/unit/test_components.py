@@ -12,7 +12,10 @@ import pytest
 
 from mops import Mesh
 from mops.model import Model
-from mops.query import Nodes, NodeQuery, Elements, ElementQuery, Faces, FaceQuery
+from mops.query import (
+    Nodes, NodeQuery, Elements, ElementQuery, Faces, FaceQuery,
+    IntersectQuery, InvertQuery, UnionQuery, SubtractQuery,
+)
 
 
 class TestComponentDefinition:
@@ -356,3 +359,177 @@ class TestComponentQueryDocstrings:
         """Test that Faces.in_component has a docstring."""
         assert Faces.in_component.__doc__ is not None
         assert "component" in Faces.in_component.__doc__.lower()
+
+
+class TestQuerySetOperations:
+    """Tests for intersection, inversion, and operator overloads."""
+
+    @pytest.fixture
+    def hex8_mesh(self):
+        """Create a unit cube hex8 element mesh."""
+        nodes = np.array([
+            [0.0, 0.0, 0.0],  # 0
+            [1.0, 0.0, 0.0],  # 1
+            [1.0, 1.0, 0.0],  # 2
+            [0.0, 1.0, 0.0],  # 3
+            [0.0, 0.0, 1.0],  # 4
+            [1.0, 0.0, 1.0],  # 5
+            [1.0, 1.0, 1.0],  # 6
+            [0.0, 1.0, 1.0],  # 7
+        ], dtype=np.float64)
+        elements = np.array([[0, 1, 2, 3, 4, 5, 6, 7]], dtype=np.int64)
+        return Mesh.from_arrays(nodes, elements, "hex8")
+
+    # --- Intersection tests ---
+
+    def test_intersect_method_basic(self, hex8_mesh):
+        """Test intersect() method on node queries."""
+        # Nodes with x < 0.5 AND y < 0.5
+        q1 = Nodes.where(x__lt=0.5)  # nodes 0, 3, 4, 7
+        q2 = Nodes.where(y__lt=0.5)  # nodes 0, 1, 4, 5
+        result = q1.intersect(q2).evaluate(hex8_mesh._core)
+
+        # Intersection: nodes at corner (0,0,0) and (0,0,1)
+        expected = {0, 4}
+        assert set(result) == expected
+
+    def test_intersect_method_empty_result(self, hex8_mesh):
+        """Test intersect() that produces empty result."""
+        q1 = Nodes.where(x=0)  # nodes 0, 3, 4, 7
+        q2 = Nodes.where(x=1)  # nodes 1, 2, 5, 6
+        result = q1.intersect(q2).evaluate(hex8_mesh._core)
+
+        # No overlap
+        assert len(result) == 0
+
+    def test_and_operator(self, hex8_mesh):
+        """Test & operator for intersection."""
+        q1 = Nodes.where(x__lt=0.5)
+        q2 = Nodes.where(y__lt=0.5)
+        result = (q1 & q2).evaluate(hex8_mesh._core)
+
+        expected = {0, 4}
+        assert set(result) == expected
+
+    # --- Inversion tests ---
+
+    def test_invert_method_basic(self, hex8_mesh):
+        """Test invert() method on node queries."""
+        # Invert nodes at x=0 -> should get nodes at x=1
+        q = Nodes.where(x=0)  # nodes 0, 3, 4, 7
+        result = q.invert().evaluate(hex8_mesh._core)
+
+        expected = {1, 2, 5, 6}  # nodes at x=1
+        assert set(result) == expected
+
+    def test_invert_method_all_nodes(self, hex8_mesh):
+        """Test invert() on all nodes gives empty result."""
+        q = Nodes.all()
+        result = q.invert().evaluate(hex8_mesh._core)
+
+        assert len(result) == 0
+
+    def test_invert_method_empty_query(self, hex8_mesh):
+        """Test invert() on query that matches nothing gives all nodes."""
+        # No nodes at x=999
+        q = Nodes.where(x=999)
+        result = q.invert().evaluate(hex8_mesh._core)
+
+        expected = set(range(8))  # all 8 nodes
+        assert set(result) == expected
+
+    def test_invert_operator(self, hex8_mesh):
+        """Test ~ operator for inversion."""
+        q = Nodes.where(x=0)
+        result = (~q).evaluate(hex8_mesh._core)
+
+        expected = {1, 2, 5, 6}
+        assert set(result) == expected
+
+    def test_double_invert(self, hex8_mesh):
+        """Test that ~~q gives back original nodes."""
+        q = Nodes.where(x=0)
+        original = set(q.evaluate(hex8_mesh._core))
+        double_inverted = set((~~q).evaluate(hex8_mesh._core))
+
+        assert original == double_inverted
+
+    # --- Operator overload tests ---
+
+    def test_or_operator(self, hex8_mesh):
+        """Test | operator for union."""
+        q1 = Nodes.where(x=0, y=0)  # nodes 0, 4
+        q2 = Nodes.where(x=1, y=1)  # nodes 2, 6
+        result = (q1 | q2).evaluate(hex8_mesh._core)
+
+        expected = {0, 2, 4, 6}
+        assert set(result) == expected
+
+    def test_sub_operator(self, hex8_mesh):
+        """Test - operator for subtraction."""
+        q1 = Nodes.all()
+        q2 = Nodes.where(x=0)
+        result = (q1 - q2).evaluate(hex8_mesh._core)
+
+        expected = {1, 2, 5, 6}  # all minus x=0
+        assert set(result) == expected
+
+    def test_chained_operators(self, hex8_mesh):
+        """Test chaining multiple operators."""
+        # (nodes at x=0 OR x=1) AND y=0
+        q = (Nodes.where(x=0) | Nodes.where(x=1)) & Nodes.where(y=0)
+        result = q.evaluate(hex8_mesh._core)
+
+        # x=0,y=0: nodes 0, 4
+        # x=1,y=0: nodes 1, 5
+        expected = {0, 1, 4, 5}
+        assert set(result) == expected
+
+    def test_complex_expression(self, hex8_mesh):
+        """Test complex expression with multiple operators."""
+        # All nodes except (x=0 AND y=0)
+        q = ~(Nodes.where(x=0) & Nodes.where(y=0))
+        result = q.evaluate(hex8_mesh._core)
+
+        # x=0,y=0 are nodes 0, 4
+        expected = {1, 2, 3, 5, 6, 7}
+        assert set(result) == expected
+
+    # --- Element query tests ---
+
+    @pytest.fixture
+    def multi_element_mesh(self):
+        """Create mesh with two hex8 elements."""
+        nodes = np.array([
+            [0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 1.0, 0.0], [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0], [1.0, 0.0, 1.0], [1.0, 1.0, 1.0], [0.0, 1.0, 1.0],
+            [0.0, 0.0, 2.0], [1.0, 0.0, 2.0], [1.0, 1.0, 2.0], [0.0, 1.0, 2.0],
+        ], dtype=np.float64)
+        elements = np.array([
+            [0, 1, 2, 3, 4, 5, 6, 7],
+            [4, 5, 6, 7, 8, 9, 10, 11],
+        ], dtype=np.int64)
+        return Mesh.from_arrays(nodes, elements, "hex8")
+
+    def test_element_intersection(self, multi_element_mesh):
+        """Test intersection on element queries."""
+        q1 = Elements.all()  # elements 0, 1
+        q2 = Elements.by_indices([0])  # element 0
+        result = (q1 & q2).evaluate(multi_element_mesh._core)
+
+        assert list(result) == [0]
+
+    def test_element_inversion(self, multi_element_mesh):
+        """Test inversion on element queries."""
+        q = Elements.by_indices([0])
+        result = (~q).evaluate(multi_element_mesh._core)
+
+        assert list(result) == [1]
+
+    def test_element_union_operator(self, multi_element_mesh):
+        """Test | operator on element queries."""
+        q1 = Elements.by_indices([0])
+        q2 = Elements.by_indices([1])
+        result = (q1 | q2).evaluate(multi_element_mesh._core)
+
+        assert set(result) == {0, 1}
