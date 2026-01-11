@@ -255,6 +255,7 @@ class NodeQuery(Query):
     _in_sphere: tuple[tuple[float, float, float], float] | None = None
     _in_box: tuple[tuple[float, float, float], tuple[float, float, float]] | None = None
     _near_line: tuple[tuple[float, float, float], tuple[float, float, float], float] | None = None
+    _on_elements: "ElementQuery | None" = None
 
     def and_where(self, **kwargs: Any) -> NodeQuery:
         """Intersect with additional predicate."""
@@ -345,6 +346,29 @@ class NodeQuery(Query):
 
             return np.where(distances <= tol)[0].astype(np.int64)
 
+        # Handle topological query: nodes on selected elements (like APDL NSLE)
+        if self._on_elements is not None:
+            # Get element connectivity from mesh
+            if hasattr(mesh, "elements"):
+                elements = mesh.elements
+            elif hasattr(mesh, "_core"):
+                elements = mesh._core.elements
+            else:
+                elements = mesh.elements
+
+            # Get selected element indices
+            elem_indices = self._on_elements.evaluate(mesh, components)
+            if len(elem_indices) == 0:
+                return np.array([], dtype=np.int64)
+
+            # Collect all unique node indices from selected elements
+            node_set: set[int] = set()
+            for elem_idx in elem_indices:
+                for node_idx in elements[elem_idx]:
+                    node_set.add(int(node_idx))
+
+            return np.array(sorted(node_set), dtype=np.int64)
+
         # Start with all nodes selected
         mask = np.ones(n_nodes, dtype=bool)
 
@@ -411,6 +435,8 @@ class NodeQuery(Query):
         if self._near_line is not None:
             start, end, tol = self._near_line
             return f"Nodes.near_line({start}, {end}, tol={tol})"
+        if self._on_elements is not None:
+            return f"Nodes.on_elements({self._on_elements})"
         return f"Nodes.where({self.predicates})"
 
 
@@ -623,6 +649,30 @@ class Nodes:
         """
         return NodeQuery(_near_line=(start, end, tol))
 
+    @classmethod
+    def on_elements(cls, element_query: "ElementQuery") -> NodeQuery:
+        """Select nodes on selected elements (like APDL NSLE).
+
+        Returns all nodes that belong to any of the selected elements.
+        This is useful for expanding an element selection to include all
+        associated nodes.
+
+        Args:
+            element_query: Query defining which elements to get nodes from
+
+        Returns:
+            NodeQuery selecting all nodes on the specified elements
+
+        Example::
+
+            # Get all nodes on elements at the fixed boundary
+            fixed_elem_nodes = Nodes.on_elements(Elements.attached_to(Nodes.where(x=0)))
+
+            # Expand element selection to include all nodes
+            bracket_nodes = Nodes.on_elements(Elements.where(material="bracket"))
+        """
+        return NodeQuery(_on_elements=element_query)
+
 
 @dataclass
 class ElementQuery(Query):
@@ -631,6 +681,8 @@ class ElementQuery(Query):
     predicates: dict[str, Any] = field(default_factory=dict)
     _all: bool = False
     _component_name: str | None = None
+    _attached_to: "NodeQuery | None" = None
+    _touching: "NodeQuery | None" = None
 
     def and_where(self, **kwargs: Any) -> ElementQuery:
         """Intersect with additional predicate."""
@@ -665,7 +717,48 @@ class ElementQuery(Query):
                 )
             return component_query.evaluate(mesh, components)
 
-        n_elements = mesh.n_elements
+        # Get element connectivity from mesh
+        # Handle both Python Mesh wrapper and raw Rust mesh
+        if hasattr(mesh, "elements"):
+            elements = mesh.elements
+            n_elements = mesh.n_elements
+        elif hasattr(mesh, "_core"):
+            elements = mesh._core.elements
+            n_elements = mesh._core.n_elements
+        else:
+            elements = mesh.elements
+            n_elements = mesh.n_elements
+
+        # Handle topological queries
+        if self._attached_to is not None:
+            # Elements where ALL nodes are in the node selection (like APDL ESLN)
+            # Get selected node indices
+            node_indices = set(self._attached_to.evaluate(mesh, components))
+            if len(node_indices) == 0:
+                return np.array([], dtype=np.int64)
+
+            selected = []
+            for elem_idx in range(n_elements):
+                elem_nodes = set(elements[elem_idx])
+                # Element is selected if ALL its nodes are in the selection
+                if elem_nodes <= node_indices:
+                    selected.append(elem_idx)
+            return np.array(selected, dtype=np.int64)
+
+        if self._touching is not None:
+            # Elements where ANY node is in the node selection
+            # Get selected node indices
+            node_indices = set(self._touching.evaluate(mesh, components))
+            if len(node_indices) == 0:
+                return np.array([], dtype=np.int64)
+
+            selected = []
+            for elem_idx in range(n_elements):
+                elem_nodes = set(elements[elem_idx])
+                # Element is selected if ANY of its nodes are in the selection
+                if elem_nodes & node_indices:
+                    selected.append(elem_idx)
+            return np.array(selected, dtype=np.int64)
 
         if self._all:
             return np.arange(n_elements, dtype=np.int64)
@@ -681,6 +774,10 @@ class ElementQuery(Query):
             return "Elements.all()"
         if self._component_name is not None:
             return f"Elements.in_component('{self._component_name}')"
+        if self._attached_to is not None:
+            return f"Elements.attached_to({self._attached_to})"
+        if self._touching is not None:
+            return f"Elements.touching({self._touching})"
         return f"Elements.where({self.predicates})"
 
 
@@ -767,6 +864,53 @@ class Elements:
             model = model.assign(Elements.in_component("bracket"), material="steel")
         """
         return ElementQuery(_component_name=name)
+
+    @classmethod
+    def attached_to(cls, node_query: NodeQuery) -> ElementQuery:
+        """Select elements where ALL nodes are in the node selection.
+
+        This is equivalent to APDL's ESLN command. An element is selected
+        only if every node of that element is in the node query result.
+
+        Args:
+            node_query: Query defining which nodes elements must be attached to
+
+        Returns:
+            ElementQuery selecting elements fully contained in the node selection
+
+        Example::
+
+            # Select elements fully attached to fixed boundary
+            fixed_elements = Elements.attached_to(Nodes.where(x=0))
+
+            # Use with pressure loads - only elements fully on surface
+            Elements.attached_to(Nodes.where(z=100))
+        """
+        return ElementQuery(_attached_to=node_query)
+
+    @classmethod
+    def touching(cls, node_query: NodeQuery) -> ElementQuery:
+        """Select elements where ANY node is in the node selection.
+
+        An element is selected if at least one of its nodes is in the
+        node query result. This is useful for finding elements adjacent
+        to a boundary or region.
+
+        Args:
+            node_query: Query defining which nodes elements may touch
+
+        Returns:
+            ElementQuery selecting elements with at least one node in the selection
+
+        Example::
+
+            # Select elements touching the boundary (any node at x=0)
+            boundary_elements = Elements.touching(Nodes.where(x=0))
+
+            # Elements in the vicinity of a point
+            nearby = Elements.touching(Nodes.near_point((50, 50, 50), tol=5))
+        """
+        return ElementQuery(_touching=node_query)
 
 
 @dataclass
