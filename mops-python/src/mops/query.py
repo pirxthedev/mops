@@ -92,15 +92,26 @@ class NodeQuery(Query):
         if self._all:
             return np.arange(n_nodes, dtype=np.int64)
 
-        # Start with all nodes
+        # Handle index-based selection first
+        if "indices" in self.predicates:
+            return np.array(self.predicates["indices"], dtype=np.int64)
+
+        # Get node coordinates for spatial predicates
+        coords = mesh.coords  # Nx3 numpy array
+        if coords.shape[0] == 0:
+            return np.array([], dtype=np.int64)
+
+        # Start with all nodes selected
         mask = np.ones(n_nodes, dtype=bool)
 
-        # Get node coordinates (we need to access mesh data)
-        # For now, we'll need to get coordinates through mesh properties
-        # This is a simplified implementation that works with our current API
+        # Default tolerance for coordinate comparisons
+        tol = 1e-10
 
         # Apply predicates
         for key, value in self.predicates.items():
+            if key == "indices":
+                continue  # Already handled above
+
             # Handle special syntax like x__gt, x__lt, x__between
             if "__" in key:
                 coord, op = key.rsplit("__", 1)
@@ -108,22 +119,36 @@ class NodeQuery(Query):
                 if coord_idx is None:
                     raise ValueError(f"Unknown coordinate: {coord}")
 
-                # We need access to node coordinates
-                # This will be enhanced when mesh provides coordinate access
-                pass
+                coord_values = coords[:, coord_idx]
+
+                if op == "gt":
+                    mask &= coord_values > value
+                elif op == "lt":
+                    mask &= coord_values < value
+                elif op == "gte":
+                    mask &= coord_values >= value
+                elif op == "lte":
+                    mask &= coord_values <= value
+                elif op == "between":
+                    low, high = value
+                    mask &= (coord_values >= low) & (coord_values <= high)
+                else:
+                    raise ValueError(f"Unknown operator: {op}")
+
             elif key in ("x", "y", "z"):
                 # Exact match with tolerance
                 coord_idx = {"x": 0, "y": 1, "z": 2}[key]
-                # Apply predicate when mesh provides coordinates
-                pass
+                coord_values = coords[:, coord_idx]
 
-        # For now, return indices based on predicates as indices
-        # This is a simplified version until mesh coordinate access is available
-        if "indices" in self.predicates:
-            return np.array(self.predicates["indices"], dtype=np.int64)
+                if callable(value):
+                    # Custom predicate function
+                    mask &= np.array([value(v) for v in coord_values], dtype=bool)
+                else:
+                    # Exact match with tolerance
+                    mask &= np.abs(coord_values - value) < tol
 
-        # Default: return all nodes (simplified for initial implementation)
-        return np.arange(n_nodes, dtype=np.int64)
+        # Return indices where mask is True
+        return np.where(mask)[0].astype(np.int64)
 
     def __repr__(self) -> str:
         if self._all:

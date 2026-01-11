@@ -184,6 +184,20 @@ impl PyMesh {
         self.inner.n_elements()
     }
 
+    /// Get node coordinates as Nx3 numpy array.
+    ///
+    /// Returns:
+    ///     2D numpy array of shape (n_nodes, 3) containing [x, y, z] coordinates
+    #[getter]
+    fn coords<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f64>> {
+        let nodes = self.inner.nodes();
+        let data: Vec<Vec<f64>> = nodes
+            .iter()
+            .map(|p| vec![p[0], p[1], p[2]])
+            .collect();
+        PyArray2::from_vec2(py, &data).expect("from_vec2 should succeed")
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "Mesh(nodes={}, elements={})",
