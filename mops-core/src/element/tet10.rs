@@ -91,11 +91,11 @@ impl Tet10 {
         let n4 = l4 * (2.0 * l4 - 1.0);
 
         // Midside nodes: N_ij = 4 * L_i * L_j
-        let n5 = 4.0 * l1 * l2;  // Edge 1-2
-        let n6 = 4.0 * l2 * l3;  // Edge 2-3
-        let n7 = 4.0 * l1 * l3;  // Edge 1-3
-        let n8 = 4.0 * l1 * l4;  // Edge 1-4
-        let n9 = 4.0 * l2 * l4;  // Edge 2-4
+        let n5 = 4.0 * l1 * l2; // Edge 1-2
+        let n6 = 4.0 * l2 * l3; // Edge 2-3
+        let n7 = 4.0 * l1 * l3; // Edge 1-3
+        let n8 = 4.0 * l1 * l4; // Edge 1-4
+        let n9 = 4.0 * l2 * l4; // Edge 2-4
         let n10 = 4.0 * l3 * l4; // Edge 3-4
 
         [n1, n2, n3, n4, n5, n6, n7, n8, n9, n10]
@@ -111,58 +111,58 @@ impl Tet10 {
 
         // Derivatives with respect to L1
         let dn_dl1 = [
-            4.0 * l1 - 1.0,  // dN1/dL1: corner node 1
-            0.0,             // dN2/dL1
-            0.0,             // dN3/dL1
-            0.0,             // dN4/dL1
-            4.0 * l2,        // dN5/dL1: edge 1-2
-            0.0,             // dN6/dL1
-            4.0 * l3,        // dN7/dL1: edge 1-3
-            4.0 * l4,        // dN8/dL1: edge 1-4
-            0.0,             // dN9/dL1
-            0.0,             // dN10/dL1
+            4.0 * l1 - 1.0, // dN1/dL1: corner node 1
+            0.0,            // dN2/dL1
+            0.0,            // dN3/dL1
+            0.0,            // dN4/dL1
+            4.0 * l2,       // dN5/dL1: edge 1-2
+            0.0,            // dN6/dL1
+            4.0 * l3,       // dN7/dL1: edge 1-3
+            4.0 * l4,       // dN8/dL1: edge 1-4
+            0.0,            // dN9/dL1
+            0.0,            // dN10/dL1
         ];
 
         // Derivatives with respect to L2
         let dn_dl2 = [
-            0.0,             // dN1/dL2
-            4.0 * l2 - 1.0,  // dN2/dL2: corner node 2
-            0.0,             // dN3/dL2
-            0.0,             // dN4/dL2
-            4.0 * l1,        // dN5/dL2: edge 1-2
-            4.0 * l3,        // dN6/dL2: edge 2-3
-            0.0,             // dN7/dL2
-            0.0,             // dN8/dL2
-            4.0 * l4,        // dN9/dL2: edge 2-4
-            0.0,             // dN10/dL2
+            0.0,            // dN1/dL2
+            4.0 * l2 - 1.0, // dN2/dL2: corner node 2
+            0.0,            // dN3/dL2
+            0.0,            // dN4/dL2
+            4.0 * l1,       // dN5/dL2: edge 1-2
+            4.0 * l3,       // dN6/dL2: edge 2-3
+            0.0,            // dN7/dL2
+            0.0,            // dN8/dL2
+            4.0 * l4,       // dN9/dL2: edge 2-4
+            0.0,            // dN10/dL2
         ];
 
         // Derivatives with respect to L3
         let dn_dl3 = [
-            0.0,             // dN1/dL3
-            0.0,             // dN2/dL3
-            4.0 * l3 - 1.0,  // dN3/dL3: corner node 3
-            0.0,             // dN4/dL3
-            0.0,             // dN5/dL3
-            4.0 * l2,        // dN6/dL3: edge 2-3
-            4.0 * l1,        // dN7/dL3: edge 1-3
-            0.0,             // dN8/dL3
-            0.0,             // dN9/dL3
-            4.0 * l4,        // dN10/dL3: edge 3-4
+            0.0,            // dN1/dL3
+            0.0,            // dN2/dL3
+            4.0 * l3 - 1.0, // dN3/dL3: corner node 3
+            0.0,            // dN4/dL3
+            0.0,            // dN5/dL3
+            4.0 * l2,       // dN6/dL3: edge 2-3
+            4.0 * l1,       // dN7/dL3: edge 1-3
+            0.0,            // dN8/dL3
+            0.0,            // dN9/dL3
+            4.0 * l4,       // dN10/dL3: edge 3-4
         ];
 
         // Derivatives with respect to L4
         let dn_dl4 = [
-            0.0,             // dN1/dL4
-            0.0,             // dN2/dL4
-            0.0,             // dN3/dL4
-            4.0 * l4 - 1.0,  // dN4/dL4: corner node 4
-            0.0,             // dN5/dL4
-            0.0,             // dN6/dL4
-            0.0,             // dN7/dL4
-            4.0 * l1,        // dN8/dL4: edge 1-4
-            4.0 * l2,        // dN9/dL4: edge 2-4
-            4.0 * l3,        // dN10/dL4: edge 3-4
+            0.0,            // dN1/dL4
+            0.0,            // dN2/dL4
+            0.0,            // dN3/dL4
+            4.0 * l4 - 1.0, // dN4/dL4: corner node 4
+            0.0,            // dN5/dL4
+            0.0,            // dN6/dL4
+            0.0,            // dN7/dL4
+            4.0 * l1,       // dN8/dL4: edge 1-4
+            4.0 * l2,       // dN9/dL4: edge 2-4
+            4.0 * l3,       // dN10/dL4: edge 3-4
         ];
 
         [dn_dl1, dn_dl2, dn_dl3, dn_dl4]
@@ -188,8 +188,8 @@ impl Tet10 {
         let mut dn_dzeta = [0.0; 10];
 
         for i in 0..10 {
-            dn_dxi[i] = dn_dl[1][i] - dn_dl[0][i];   // dN/dξ = dN/dL2 - dN/dL1
-            dn_deta[i] = dn_dl[2][i] - dn_dl[0][i];  // dN/dη = dN/dL3 - dN/dL1
+            dn_dxi[i] = dn_dl[1][i] - dn_dl[0][i]; // dN/dξ = dN/dL2 - dN/dL1
+            dn_deta[i] = dn_dl[2][i] - dn_dl[0][i]; // dN/dη = dN/dL3 - dN/dL1
             dn_dzeta[i] = dn_dl[3][i] - dn_dl[0][i]; // dN/dζ = dN/dL4 - dN/dL1
         }
 
@@ -226,7 +226,13 @@ impl Tet10 {
     /// Compute the B-matrix (strain-displacement) at a point.
     ///
     /// Returns the 6×30 B-matrix and the Jacobian determinant.
-    fn compute_b_matrix(coords: &[Point3], l1: f64, l2: f64, l3: f64, l4: f64) -> (DMatrix<f64>, f64) {
+    fn compute_b_matrix(
+        coords: &[Point3],
+        l1: f64,
+        l2: f64,
+        l3: f64,
+        l4: f64,
+    ) -> (DMatrix<f64>, f64) {
         let dn_dl = Self::shape_derivatives_barycentric(l1, l2, l3, l4);
 
         // Convert to parametric derivatives
@@ -544,7 +550,14 @@ mod tests {
                 assert!(
                     diff < k_max * 1e-12,
                     "K[{},{}] = {} != K[{},{}] = {}, diff = {}, k_max = {}",
-                    i, j, k[(i, j)], j, i, k[(j, i)], diff, k_max
+                    i,
+                    j,
+                    k[(i, j)],
+                    j,
+                    i,
+                    k[(j, i)],
+                    diff,
+                    k_max
                 );
             }
         }
@@ -693,7 +706,12 @@ mod tests {
                 assert!(
                     diff < k_max * 1e-10,
                     "K[{},{}] != K[{},{}], diff = {}, k_max = {}",
-                    i, j, j, i, diff, k_max
+                    i,
+                    j,
+                    j,
+                    i,
+                    diff,
+                    k_max
                 );
             }
         }

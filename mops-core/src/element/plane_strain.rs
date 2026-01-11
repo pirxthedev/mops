@@ -181,11 +181,7 @@ impl Element for Tri3PlaneStrain {
         displacements: &[f64],
         material: &Material,
     ) -> Vec<StressTensor> {
-        assert_eq!(
-            displacements.len(),
-            6,
-            "Tri3 requires 6 displacement DOFs"
-        );
+        assert_eq!(displacements.len(), 6, "Tri3 requires 6 displacement DOFs");
 
         let (b, _area) = Self::compute_b_matrix(coords);
         let d = material.constitutive_plane_strain();
@@ -342,7 +338,9 @@ impl Quad4PlaneStrain {
         let (j, _det_j) = Self::jacobian(coords, xi, eta);
 
         // Invert Jacobian to get dN/dx, dN/dy from dN/dξ, dN/dη
-        let j_inv = j.try_inverse().expect("Degenerate element: Jacobian is singular");
+        let j_inv = j
+            .try_inverse()
+            .expect("Degenerate element: Jacobian is singular");
 
         // dN/dx = J^(-1) * dN/dξ
         // [dN/dx]   [j11 j12] [dN/dξ]
@@ -358,9 +356,9 @@ impl Quad4PlaneStrain {
         let mut b = DMatrix::zeros(3, 8);
         for i in 0..4 {
             let col = 2 * i;
-            b[(0, col)] = dn_dx[i].0;     // ε_xx = ∂u/∂x
+            b[(0, col)] = dn_dx[i].0; // ε_xx = ∂u/∂x
             b[(1, col + 1)] = dn_dx[i].1; // ε_yy = ∂v/∂y
-            b[(2, col)] = dn_dx[i].1;     // γ_xy = ∂u/∂y + ∂v/∂x
+            b[(2, col)] = dn_dx[i].1; // γ_xy = ∂u/∂y + ∂v/∂x
             b[(2, col + 1)] = dn_dx[i].0;
         }
 
@@ -417,11 +415,7 @@ impl Element for Quad4PlaneStrain {
             4,
             "Quad4 requires exactly 4 nodal coordinates"
         );
-        assert_eq!(
-            displacements.len(),
-            8,
-            "Quad4 requires 8 displacement DOFs"
-        );
+        assert_eq!(displacements.len(), 8, "Quad4 requires 8 displacement DOFs");
 
         let d = material.constitutive_plane_strain();
         let u = nalgebra::DVector::from_row_slice(displacements);
@@ -634,7 +628,10 @@ mod tests {
         // σ_zz = ν(σ_x + σ_y)
         let expected_sigma_zz = mat.poissons_ratio * (stress.0[0] + stress.0[1]);
         assert_relative_eq!(stress.0[2], expected_sigma_zz, epsilon = 1e-6);
-        assert!(stress.0[2].abs() > 1e-6, "σ_zz should be non-zero for plane strain");
+        assert!(
+            stress.0[2].abs() > 1e-6,
+            "σ_zz should be non-zero for plane strain"
+        );
     }
 
     // === Quad4PlaneStrain Tests ===
@@ -723,10 +720,10 @@ mod tests {
         // Node 3 (1,1): u=0.001
         // Node 4 (0,1): u=0
         let displacements = [
-            0.0, 0.0,    // Node 1
-            0.001, 0.0,  // Node 2
-            0.001, 0.0,  // Node 3
-            0.0, 0.0,    // Node 4
+            0.0, 0.0, // Node 1
+            0.001, 0.0, // Node 2
+            0.001, 0.0, // Node 3
+            0.0, 0.0, // Node 4
         ];
 
         let stresses = quad.stress(&coords, &displacements, &mat);
@@ -758,10 +755,14 @@ mod tests {
         // This gives γ_xy = ∂u/∂y + ∂v/∂x = 0.001 + 0.001 = 0.002
         let gamma = 0.002;
         let displacements = [
-            0.0, 0.0,                      // Node 1: (0,0)
-            0.0, gamma / 2.0,              // Node 2: (1,0) -> v = γ/2 * 1 = 0.001
-            gamma / 2.0, gamma / 2.0,      // Node 3: (1,1) -> u = 0.001, v = 0.001
-            gamma / 2.0, 0.0,              // Node 4: (0,1) -> u = γ/2 * 1 = 0.001
+            0.0,
+            0.0, // Node 1: (0,0)
+            0.0,
+            gamma / 2.0, // Node 2: (1,0) -> v = γ/2 * 1 = 0.001
+            gamma / 2.0,
+            gamma / 2.0, // Node 3: (1,1) -> u = 0.001, v = 0.001
+            gamma / 2.0,
+            0.0, // Node 4: (0,1) -> u = γ/2 * 1 = 0.001
         ];
 
         let stresses = quad.stress(&coords, &displacements, &mat);
@@ -773,7 +774,7 @@ mod tests {
         for stress in &stresses {
             assert_relative_eq!(stress.0[0], 0.0, epsilon = 1e-3); // σ_xx = 0
             assert_relative_eq!(stress.0[1], 0.0, epsilon = 1e-3); // σ_yy = 0
-            // σ_zz = ν(σ_x + σ_y) = 0 for pure shear
+                                                                   // σ_zz = ν(σ_x + σ_y) = 0 for pure shear
             assert_relative_eq!(stress.0[2], 0.0, epsilon = 1e-3);
             assert_relative_eq!(stress.0[3], expected_tau_xy, epsilon = 1e-3); // τ_xy
         }
@@ -787,19 +788,17 @@ mod tests {
         let mat = Material::new(1e6, 0.3).unwrap();
 
         // Apply biaxial compression
-        let displacements = [
-            0.0, 0.0,
-            -0.001, 0.0,
-            -0.001, -0.001,
-            0.0, -0.001,
-        ];
+        let displacements = [0.0, 0.0, -0.001, 0.0, -0.001, -0.001, 0.0, -0.001];
 
         let stresses = quad.stress(&coords, &displacements, &mat);
         for stress in &stresses {
             // σ_zz should be non-zero for plane strain
             let expected_sigma_zz = mat.poissons_ratio * (stress.0[0] + stress.0[1]);
             assert_relative_eq!(stress.0[2], expected_sigma_zz, epsilon = 1e-6);
-            assert!(stress.0[2].abs() > 1e-6, "σ_zz should be non-zero for plane strain");
+            assert!(
+                stress.0[2].abs() > 1e-6,
+                "σ_zz should be non-zero for plane strain"
+            );
         }
     }
 
@@ -821,7 +820,11 @@ mod tests {
             for j in 0..8 {
                 // Use relative epsilon for large values
                 let max_val = k[(i, j)].abs().max(k[(j, i)].abs());
-                let rel_eps = if max_val > 1.0 { 1e-10 * max_val } else { 1e-10 };
+                let rel_eps = if max_val > 1.0 {
+                    1e-10 * max_val
+                } else {
+                    1e-10
+                };
                 assert_relative_eq!(k[(i, j)], k[(j, i)], epsilon = rel_eps);
             }
         }
@@ -879,7 +882,7 @@ mod tests {
 
     #[test]
     fn test_plane_strain_stiffer_than_plane_stress() {
-        use crate::element::plane_stress::{Tri3 as Tri3Stress, Quad4 as Quad4Stress};
+        use crate::element::plane_stress::{Quad4 as Quad4Stress, Tri3 as Tri3Stress};
 
         let coords_tri = unit_right_triangle();
         let coords_quad = unit_square_quad();

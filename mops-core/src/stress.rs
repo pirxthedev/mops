@@ -133,9 +133,7 @@ pub fn recover_stresses(mesh: &Mesh, material: &Material, displacements: &[f64])
             let element = create_element(connectivity.element_type);
 
             // Get element nodal coordinates
-            let coords = mesh
-                .element_coords(elem_idx)
-                .expect("Valid element index");
+            let coords = mesh.element_coords(elem_idx).expect("Valid element index");
 
             // Extract element nodal displacements
             let n_nodes = connectivity.nodes.len();
@@ -146,10 +144,8 @@ pub fn recover_stresses(mesh: &Mesh, material: &Material, displacements: &[f64])
                 for dof in 0..dofs_per_node {
                     let global_dof = global_node * dofs_per_node + dof;
                     let local_dof = local_node * dofs_per_node + dof;
-                    elem_displacements[local_dof] = displacements
-                        .get(global_dof)
-                        .copied()
-                        .unwrap_or(0.0);
+                    elem_displacements[local_dof] =
+                        displacements.get(global_dof).copied().unwrap_or(0.0);
                 }
             }
 
@@ -220,8 +216,8 @@ pub fn compute_nodal_stresses(mesh: &Mesh, stress_field: &StressField) -> Vec<St
 mod tests {
     use super::*;
     use crate::mesh::ElementType;
-    use nalgebra::Vector3;
     use approx::assert_relative_eq;
+    use nalgebra::Vector3;
 
     #[test]
     fn test_stress_recovery_single_tet4() {
@@ -231,7 +227,8 @@ mod tests {
         mesh.add_node(Vector3::new(1.0, 0.0, 0.0));
         mesh.add_node(Vector3::new(0.0, 1.0, 0.0));
         mesh.add_node(Vector3::new(0.0, 0.0, 1.0));
-        mesh.add_element(ElementType::Tet4, vec![0, 1, 2, 3]).unwrap();
+        mesh.add_element(ElementType::Tet4, vec![0, 1, 2, 3])
+            .unwrap();
 
         let material = Material::steel();
 
@@ -253,7 +250,8 @@ mod tests {
         mesh.add_node(Vector3::new(1.0, 0.0, 0.0));
         mesh.add_node(Vector3::new(0.0, 1.0, 0.0));
         mesh.add_node(Vector3::new(0.0, 0.0, 1.0));
-        mesh.add_element(ElementType::Tet4, vec![0, 1, 2, 3]).unwrap();
+        mesh.add_element(ElementType::Tet4, vec![0, 1, 2, 3])
+            .unwrap();
 
         let material = Material::steel();
         let e = material.youngs_modulus;
@@ -267,10 +265,10 @@ mod tests {
         // Node 3: (0,0,1) -> (0, 0, 0)
         let strain = 0.001;
         let displacements = vec![
-            0.0, 0.0, 0.0,           // Node 0
-            strain, 0.0, 0.0,        // Node 1
-            0.0, 0.0, 0.0,           // Node 2
-            0.0, 0.0, 0.0,           // Node 3
+            0.0, 0.0, 0.0, // Node 0
+            strain, 0.0, 0.0, // Node 1
+            0.0, 0.0, 0.0, // Node 2
+            0.0, 0.0, 0.0, // Node 3
         ];
 
         let stresses = recover_stresses(&mesh, &material, &displacements);
@@ -306,8 +304,10 @@ mod tests {
         mesh.add_node(Vector3::new(0.5, 0.5, 1.0)); // 3
         mesh.add_node(Vector3::new(0.5, 0.5, -1.0)); // 4
 
-        mesh.add_element(ElementType::Tet4, vec![0, 1, 2, 3]).unwrap();
-        mesh.add_element(ElementType::Tet4, vec![0, 1, 2, 4]).unwrap();
+        mesh.add_element(ElementType::Tet4, vec![0, 1, 2, 3])
+            .unwrap();
+        mesh.add_element(ElementType::Tet4, vec![0, 1, 2, 4])
+            .unwrap();
 
         let material = Material::steel();
 
@@ -332,7 +332,8 @@ mod tests {
         mesh.add_node(Vector3::new(1.0, 0.0, 0.0));
         mesh.add_node(Vector3::new(0.0, 1.0, 0.0));
         mesh.add_node(Vector3::new(0.0, 0.0, 1.0));
-        mesh.add_element(ElementType::Tet4, vec![0, 1, 2, 3]).unwrap();
+        mesh.add_element(ElementType::Tet4, vec![0, 1, 2, 3])
+            .unwrap();
 
         let material = Material::steel();
         let displacements = vec![0.0; 12];

@@ -149,11 +149,11 @@ impl Tri3Axisymmetric {
         let mut b = DMatrix::zeros(4, 6);
 
         // Node 1 (columns 0, 1)
-        b[(0, 0)] = dn1_dr;           // ε_rr
-        b[(1, 1)] = dn1_dz;           // ε_zz
-        b[(2, 0)] = n1 / r_c;         // ε_θθ = N1 * u_r1 / r_c
-        b[(3, 0)] = dn1_dz;           // γ_rz = ∂u_r/∂z
-        b[(3, 1)] = dn1_dr;           // γ_rz += ∂u_z/∂r
+        b[(0, 0)] = dn1_dr; // ε_rr
+        b[(1, 1)] = dn1_dz; // ε_zz
+        b[(2, 0)] = n1 / r_c; // ε_θθ = N1 * u_r1 / r_c
+        b[(3, 0)] = dn1_dz; // γ_rz = ∂u_r/∂z
+        b[(3, 1)] = dn1_dr; // γ_rz += ∂u_z/∂r
 
         // Node 2 (columns 2, 3)
         b[(0, 2)] = dn2_dr;
@@ -206,11 +206,7 @@ impl Element for Tri3Axisymmetric {
         displacements: &[f64],
         material: &Material,
     ) -> Vec<StressTensor> {
-        assert_eq!(
-            displacements.len(),
-            6,
-            "Tri3 requires 6 displacement DOFs"
-        );
+        assert_eq!(displacements.len(), 6, "Tri3 requires 6 displacement DOFs");
 
         let (b, _area, _r_c) = Self::compute_b_matrix(coords);
         let d = material.constitutive_axisymmetric();
@@ -353,7 +349,9 @@ impl Quad4Axisymmetric {
         let (j, _det_j) = Self::jacobian(coords, xi, eta);
 
         // Invert Jacobian to get dN/dr, dN/dz from dN/dξ, dN/dη
-        let j_inv = j.try_inverse().expect("Degenerate element: Jacobian is singular");
+        let j_inv = j
+            .try_inverse()
+            .expect("Degenerate element: Jacobian is singular");
 
         // dN/dr = J^(-1) * dN/dξ
         let mut dn_dr = [(0.0, 0.0); 4];
@@ -371,10 +369,10 @@ impl Quad4Axisymmetric {
         let mut b = DMatrix::zeros(4, 8);
         for i in 0..4 {
             let col = 2 * i;
-            b[(0, col)] = dn_dr[i].0;       // ε_rr = ∂u_r/∂r
-            b[(1, col + 1)] = dn_dr[i].1;   // ε_zz = ∂u_z/∂z
-            b[(2, col)] = n[i] / r;         // ε_θθ = u_r/r = (N_i * u_ri) / r
-            b[(3, col)] = dn_dr[i].1;       // γ_rz = ∂u_r/∂z + ∂u_z/∂r
+            b[(0, col)] = dn_dr[i].0; // ε_rr = ∂u_r/∂r
+            b[(1, col + 1)] = dn_dr[i].1; // ε_zz = ∂u_z/∂z
+            b[(2, col)] = n[i] / r; // ε_θθ = u_r/r = (N_i * u_ri) / r
+            b[(3, col)] = dn_dr[i].1; // γ_rz = ∂u_r/∂z + ∂u_z/∂r
             b[(3, col + 1)] = dn_dr[i].0;
         }
 
@@ -437,11 +435,7 @@ impl Element for Quad4Axisymmetric {
             4,
             "Quad4 requires exactly 4 nodal coordinates"
         );
-        assert_eq!(
-            displacements.len(),
-            8,
-            "Quad4 requires 8 displacement DOFs"
-        );
+        assert_eq!(displacements.len(), 8, "Quad4 requires 8 displacement DOFs");
 
         let d = material.constitutive_axisymmetric();
         let u = nalgebra::DVector::from_row_slice(displacements);
@@ -630,7 +624,10 @@ mod tests {
         // σ_θθ is in component [2] (mapped to σ_zz in 6-component form)
         // Uniform radial displacement creates hoop strain ε_θθ = u_r/r
         // which couples to radial and axial stress through D matrix
-        assert!(stress.0[2].abs() > 1e-6, "σ_θθ should be non-zero for radial displacement");
+        assert!(
+            stress.0[2].abs() > 1e-6,
+            "σ_θθ should be non-zero for radial displacement"
+        );
     }
 
     #[test]
@@ -692,7 +689,11 @@ mod tests {
             for j in 0..8 {
                 // Use relative epsilon for large values (steel E = 200 GPa)
                 let max_val = k[(i, j)].abs().max(k[(j, i)].abs());
-                let rel_eps = if max_val > 1.0 { 1e-12 * max_val } else { 1e-10 };
+                let rel_eps = if max_val > 1.0 {
+                    1e-12 * max_val
+                } else {
+                    1e-10
+                };
                 assert_relative_eq!(k[(i, j)], k[(j, i)], epsilon = rel_eps);
             }
         }
@@ -746,7 +747,10 @@ mod tests {
 
         for stress in &stresses {
             // σ_θθ should be non-zero for radial displacement
-            assert!(stress.0[2].abs() > 1e-6, "σ_θθ should be non-zero for radial displacement");
+            assert!(
+                stress.0[2].abs() > 1e-6,
+                "σ_θθ should be non-zero for radial displacement"
+            );
         }
     }
 
@@ -759,10 +763,10 @@ mod tests {
         // Impose uniform ε_zz = 0.001: u_z = 0.001 * z
         // Nodes at z=0: u_z=0, Nodes at z=1: u_z=0.001
         let displacements = [
-            0.0, 0.0,     // Node 1 (z=0)
-            0.0, 0.0,     // Node 2 (z=0)
-            0.0, 0.001,   // Node 3 (z=1)
-            0.0, 0.001,   // Node 4 (z=1)
+            0.0, 0.0, // Node 1 (z=0)
+            0.0, 0.0, // Node 2 (z=0)
+            0.0, 0.001, // Node 3 (z=1)
+            0.0, 0.001, // Node 4 (z=1)
         ];
 
         let stresses = quad.stress(&coords, &displacements, &mat);
@@ -830,7 +834,11 @@ mod tests {
         for i in 0..8 {
             for j in 0..8 {
                 let max_val = k[(i, j)].abs().max(k[(j, i)].abs());
-                let rel_eps = if max_val > 1.0 { 1e-10 * max_val } else { 1e-10 };
+                let rel_eps = if max_val > 1.0 {
+                    1e-10 * max_val
+                } else {
+                    1e-10
+                };
                 assert_relative_eq!(k[(i, j)], k[(j, i)], epsilon = rel_eps);
             }
         }
@@ -856,10 +864,10 @@ mod tests {
         // that represents expansion from internal pressure
         // Inner surface moves outward more than outer surface
         let displacements = [
-            0.002, 0.0,   // Node 1 (r=1, z=0) - inner surface
-            0.001, 0.0,   // Node 2 (r=2, z=0) - outer surface
-            0.001, 0.0,   // Node 3 (r=2, z=1)
-            0.002, 0.0,   // Node 4 (r=1, z=1)
+            0.002, 0.0, // Node 1 (r=1, z=0) - inner surface
+            0.001, 0.0, // Node 2 (r=2, z=0) - outer surface
+            0.001, 0.0, // Node 3 (r=2, z=1)
+            0.002, 0.0, // Node 4 (r=1, z=1)
         ];
 
         let stresses = quad.stress(&coords, &displacements, &mat);
@@ -869,7 +877,10 @@ mod tests {
         // proper boundary conditions
         for stress in &stresses {
             // Check that hoop stress σ_θθ exists
-            assert!(stress.0[2].abs() > 1e-3, "Should have significant hoop stress");
+            assert!(
+                stress.0[2].abs() > 1e-3,
+                "Should have significant hoop stress"
+            );
         }
     }
 }

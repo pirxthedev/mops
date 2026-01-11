@@ -15,21 +15,23 @@
 //! - [`Material`]: Material property definitions
 //! - [`Solver`] trait: Linear system solution strategies
 
-pub mod types;
-pub mod element;
-pub mod mesh;
-pub mod material;
-pub mod sparse;
 pub mod assembly;
-pub mod solver;
-pub mod stress;
+pub mod element;
 pub mod error;
+pub mod material;
+pub mod mesh;
+pub mod solver;
+pub mod sparse;
+pub mod stress;
+pub mod types;
 
-pub use types::{Point3, StressTensor, StrainTensor};
-pub use element::{Element, create_element, Tri3, Quad4, Tri3PlaneStrain, Quad4PlaneStrain};
-pub use mesh::Mesh;
-pub use material::Material;
-pub use sparse::CsrMatrix;
-pub use solver::{Solver, FaerCholeskySolver, CachedCholeskySolver, SolverConfig, SolverType, select_solver};
-pub use stress::{recover_stresses, StressField, ElementStress, compute_nodal_stresses};
+pub use element::{create_element, Element, Quad4, Quad4PlaneStrain, Tri3, Tri3PlaneStrain};
 pub use error::{Error, Result};
+pub use material::Material;
+pub use mesh::Mesh;
+pub use solver::{
+    select_solver, CachedCholeskySolver, FaerCholeskySolver, Solver, SolverConfig, SolverType,
+};
+pub use sparse::CsrMatrix;
+pub use stress::{compute_nodal_stresses, recover_stresses, ElementStress, StressField};
+pub use types::{Point3, StrainTensor, StressTensor};

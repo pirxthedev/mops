@@ -54,11 +54,7 @@ impl StressTensor {
     /// Extract the full 3x3 symmetric stress matrix.
     pub fn to_matrix(&self) -> Matrix3<f64> {
         let s = &self.0;
-        Matrix3::new(
-            s[0], s[3], s[5],
-            s[3], s[1], s[4],
-            s[5], s[4], s[2],
-        )
+        Matrix3::new(s[0], s[3], s[5], s[3], s[1], s[4], s[5], s[4], s[2])
     }
 }
 
@@ -90,9 +86,15 @@ impl StrainTensor {
         let e = &self.0;
         // Note: off-diagonal terms are γ/2 = ε
         Matrix3::new(
-            e[0],       e[3] / 2.0, e[5] / 2.0,
-            e[3] / 2.0, e[1],       e[4] / 2.0,
-            e[5] / 2.0, e[4] / 2.0, e[2],
+            e[0],
+            e[3] / 2.0,
+            e[5] / 2.0,
+            e[3] / 2.0,
+            e[1],
+            e[4] / 2.0,
+            e[5] / 2.0,
+            e[4] / 2.0,
+            e[2],
         )
     }
 }

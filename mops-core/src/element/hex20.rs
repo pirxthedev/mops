@@ -211,15 +211,27 @@ impl Hex20 {
                     // dN/dξ = (1/8) * ξ_i * b * c * (s + a)
                     //       = (1/8) * ξ_i * b * c * (ξ_i*ξ + η_i*η + ζ_i*ζ - 2 + 1 + ξ_i*ξ)
                     //       = (1/8) * ξ_i * b * c * (2*ξ_i*ξ + η_i*η + ζ_i*ζ - 1)
-                    dn_dxi[i] = 0.125 * xi_i * b * c * (2.0 * xi_i * xi + eta_i * eta + zeta_i * zeta - 1.0);
+                    dn_dxi[i] = 0.125
+                        * xi_i
+                        * b
+                        * c
+                        * (2.0 * xi_i * xi + eta_i * eta + zeta_i * zeta - 1.0);
 
                     // dN/dη = (1/8) * a * η_i * c * (s + b)
                     //       = (1/8) * η_i * a * c * (ξ_i*ξ + 2*η_i*η + ζ_i*ζ - 1)
-                    dn_deta[i] = 0.125 * eta_i * a * c * (xi_i * xi + 2.0 * eta_i * eta + zeta_i * zeta - 1.0);
+                    dn_deta[i] = 0.125
+                        * eta_i
+                        * a
+                        * c
+                        * (xi_i * xi + 2.0 * eta_i * eta + zeta_i * zeta - 1.0);
 
                     // dN/dζ = (1/8) * a * b * ζ_i * (s + c)
                     //       = (1/8) * ζ_i * a * b * (ξ_i*ξ + η_i*η + 2*ζ_i*ζ - 1)
-                    dn_dzeta[i] = 0.125 * zeta_i * a * b * (xi_i * xi + eta_i * eta + 2.0 * zeta_i * zeta - 1.0);
+                    dn_dzeta[i] = 0.125
+                        * zeta_i
+                        * a
+                        * b
+                        * (xi_i * xi + eta_i * eta + 2.0 * zeta_i * zeta - 1.0);
                 }
                 NodeType::MidEdgeXi => {
                     // Mid-edge node on ξ-edge (ξ_i = 0):
@@ -544,10 +556,10 @@ mod tests {
     fn test_hex20_shape_functions_sum_to_one() {
         // Shape functions should sum to 1 at any point
         let test_points = [
-            (0.0, 0.0, 0.0),   // center
-            (0.5, 0.5, 0.5),   // arbitrary
-            (-0.5, 0.3, 0.2),  // arbitrary
-            (0.9, -0.9, 0.9),  // near corner
+            (0.0, 0.0, 0.0),  // center
+            (0.5, 0.5, 0.5),  // arbitrary
+            (-0.5, 0.3, 0.2), // arbitrary
+            (0.9, -0.9, 0.9), // near corner
         ];
 
         for (xi, eta, zeta) in test_points {
@@ -570,7 +582,11 @@ mod tests {
                 let expected = if i == j { 1.0 } else { 0.0 };
                 assert!(
                     (n[j] - expected).abs() < 1e-12,
-                    "At corner node {}, N[{}] = {} (expected {})", i, j, n[j], expected
+                    "At corner node {}, N[{}] = {} (expected {})",
+                    i,
+                    j,
+                    n[j],
+                    expected
                 );
             }
         }
@@ -589,7 +605,11 @@ mod tests {
                 let expected = if i == j { 1.0 } else { 0.0 };
                 assert!(
                     (n[j] - expected).abs() < 1e-12,
-                    "At mid-edge node {}, N[{}] = {} (expected {})", i, j, n[j], expected
+                    "At mid-edge node {}, N[{}] = {} (expected {})",
+                    i,
+                    j,
+                    n[j],
+                    expected
                 );
             }
         }
@@ -640,7 +660,10 @@ mod tests {
                 assert!(
                     diff < 1e-10 || diff / max_val < 1e-10,
                     "Asymmetry at ({}, {}): {} vs {}",
-                    i, j, k[(i, j)], k[(j, i)]
+                    i,
+                    j,
+                    k[(i, j)],
+                    k[(j, i)]
                 );
             }
         }
@@ -767,11 +790,7 @@ mod tests {
     fn test_hex20_shape_derivatives_numerical() {
         // Verify analytical derivatives against finite difference approximation
         let h = 1e-6;
-        let test_points = [
-            (0.3, 0.5, -0.2),
-            (-0.5, 0.7, 0.3),
-            (0.0, 0.0, 0.0),
-        ];
+        let test_points = [(0.3, 0.5, -0.2), (-0.5, 0.7, 0.3), (0.0, 0.0, 0.0)];
 
         for (xi, eta, zeta) in test_points {
             let (dn_dxi, dn_deta, dn_dzeta) = Hex20::shape_derivatives(xi, eta, zeta);
@@ -791,7 +810,12 @@ mod tests {
 
                 assert_relative_eq!(dn_dxi[i], dn_dxi_num, epsilon = 1e-6, max_relative = 1e-5);
                 assert_relative_eq!(dn_deta[i], dn_deta_num, epsilon = 1e-6, max_relative = 1e-5);
-                assert_relative_eq!(dn_dzeta[i], dn_dzeta_num, epsilon = 1e-6, max_relative = 1e-5);
+                assert_relative_eq!(
+                    dn_dzeta[i],
+                    dn_dzeta_num,
+                    epsilon = 1e-6,
+                    max_relative = 1e-5
+                );
             }
         }
     }
@@ -823,7 +847,11 @@ mod tests {
         for stress in &stresses {
             // All stress components should be finite
             for j in 0..6 {
-                assert!(stress.0[j].is_finite(), "Stress component {} is not finite", j);
+                assert!(
+                    stress.0[j].is_finite(),
+                    "Stress component {} is not finite",
+                    j
+                );
             }
         }
     }

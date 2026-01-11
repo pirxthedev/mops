@@ -127,10 +127,7 @@ pub fn gauss_tet(n: usize) -> Vec<GaussPoint> {
         1 => {
             // 1-point rule: centroid
             // Weight = volume of unit tet = 1/6
-            vec![GaussPoint::new(
-                [0.25, 0.25, 0.25, 0.25],
-                1.0 / 6.0,
-            )]
+            vec![GaussPoint::new([0.25, 0.25, 0.25, 0.25], 1.0 / 6.0)]
         }
         4 => {
             // 4-point rule (degree 2)
@@ -201,10 +198,7 @@ pub fn gauss_hex(n: usize) -> Vec<GaussPoint> {
     for &(xi, w_xi) in &rule_1d {
         for &(eta, w_eta) in &rule_1d {
             for &(zeta, w_zeta) in &rule_1d {
-                points.push(GaussPoint::new(
-                    [xi, eta, zeta, 0.0],
-                    w_xi * w_eta * w_zeta,
-                ));
+                points.push(GaussPoint::new([xi, eta, zeta, 0.0], w_xi * w_eta * w_zeta));
             }
         }
     }

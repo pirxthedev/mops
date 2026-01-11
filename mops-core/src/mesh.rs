@@ -2,8 +2,8 @@
 //!
 //! Stores nodal coordinates and element connectivity.
 
-use crate::types::Point3;
 use crate::error::{Error, Result};
+use crate::types::Point3;
 
 /// Element connectivity - node indices for an element.
 #[derive(Debug, Clone, PartialEq)]
@@ -208,7 +208,8 @@ mod tests {
         assert_eq!(mesh.n_nodes(), 4);
 
         // Add tet4 element
-        mesh.add_element(ElementType::Tet4, vec![0, 1, 2, 3]).unwrap();
+        mesh.add_element(ElementType::Tet4, vec![0, 1, 2, 3])
+            .unwrap();
         assert_eq!(mesh.n_elements(), 1);
     }
 

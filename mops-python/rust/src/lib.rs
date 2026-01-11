@@ -192,10 +192,7 @@ impl PyMesh {
     #[getter]
     fn coords<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f64>> {
         let nodes = self.inner.nodes();
-        let data: Vec<Vec<f64>> = nodes
-            .iter()
-            .map(|p| vec![p[0], p[1], p[2]])
-            .collect();
+        let data: Vec<Vec<f64>> = nodes.iter().map(|p| vec![p[0], p[1], p[2]]).collect();
         PyArray2::from_vec2(py, &data).expect("from_vec2 should succeed")
     }
 
@@ -333,10 +330,7 @@ impl PyResults {
     /// Each row contains the average stress tensor components for one element
     /// in Voigt notation: [sigma_xx, sigma_yy, sigma_zz, tau_xy, tau_yz, tau_xz]
     fn stress<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f64>> {
-        let data: Vec<Vec<f64>> = self.element_stresses
-            .iter()
-            .map(|s| s.to_vec())
-            .collect();
+        let data: Vec<Vec<f64>> = self.element_stresses.iter().map(|s| s.to_vec()).collect();
         PyArray2::from_vec2(py, &data).expect("from_vec2 should succeed")
     }
 
@@ -353,14 +347,21 @@ impl PyResults {
     /// Get stress for a specific element by index.
     ///
     /// Returns the average stress tensor [sigma_xx, sigma_yy, sigma_zz, tau_xy, tau_yz, tau_xz]
-    fn element_stress<'py>(&self, py: Python<'py>, element_id: usize) -> PyResult<Bound<'py, PyArray1<f64>>> {
+    fn element_stress<'py>(
+        &self,
+        py: Python<'py>,
+        element_id: usize,
+    ) -> PyResult<Bound<'py, PyArray1<f64>>> {
         if element_id >= self.n_elements {
             return Err(PyValueError::new_err(format!(
                 "Element index {} out of bounds (n_elements={})",
                 element_id, self.n_elements
             )));
         }
-        Ok(PyArray1::from_vec(py, self.element_stresses[element_id].to_vec()))
+        Ok(PyArray1::from_vec(
+            py,
+            self.element_stresses[element_id].to_vec(),
+        ))
     }
 
     /// Get element von Mises stress by element index.
@@ -591,7 +592,13 @@ fn element_stiffness<'py>(
     // Convert nodes to Point3 array
     let nodes_array = nodes.as_array();
     let coords: Vec<Point3> = (0..expected_nodes)
-        .map(|i| Point3::new(nodes_array[[i, 0]], nodes_array[[i, 1]], nodes_array[[i, 2]]))
+        .map(|i| {
+            Point3::new(
+                nodes_array[[i, 0]],
+                nodes_array[[i, 1]],
+                nodes_array[[i, 2]],
+            )
+        })
         .collect();
 
     // Create element and compute stiffness
@@ -644,7 +651,13 @@ fn element_volume(element_type: &str, nodes: PyReadonlyArray2<f64>) -> PyResult<
     // Convert nodes to Point3 array
     let nodes_array = nodes.as_array();
     let coords: Vec<Point3> = (0..expected_nodes)
-        .map(|i| Point3::new(nodes_array[[i, 0]], nodes_array[[i, 1]], nodes_array[[i, 2]]))
+        .map(|i| {
+            Point3::new(
+                nodes_array[[i, 0]],
+                nodes_array[[i, 1]],
+                nodes_array[[i, 2]],
+            )
+        })
         .collect();
 
     // Create element and compute volume
@@ -708,7 +721,13 @@ fn compute_element_stress<'py>(
     // Convert nodes to Point3 array
     let nodes_array = nodes.as_array();
     let coords: Vec<Point3> = (0..expected_nodes)
-        .map(|i| Point3::new(nodes_array[[i, 0]], nodes_array[[i, 1]], nodes_array[[i, 2]]))
+        .map(|i| {
+            Point3::new(
+                nodes_array[[i, 0]],
+                nodes_array[[i, 1]],
+                nodes_array[[i, 2]],
+            )
+        })
         .collect();
 
     // Convert displacements to slice

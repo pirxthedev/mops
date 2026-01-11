@@ -3,8 +3,8 @@
 //! Supports isotropic linear elastic materials for the initial implementation.
 //! Future extensions will include orthotropic and anisotropic materials.
 
-use crate::types::ConstitutiveMatrix;
 use crate::error::{Error, Result};
+use crate::types::ConstitutiveMatrix;
 use nalgebra::Matrix6;
 
 /// Material properties for structural analysis.
@@ -91,12 +91,9 @@ impl Material {
         let c44 = factor * (1.0 - 2.0 * nu) / 2.0; // = G
 
         Matrix6::new(
-            c11, c12, c12, 0.0, 0.0, 0.0,
-            c12, c11, c12, 0.0, 0.0, 0.0,
-            c12, c12, c11, 0.0, 0.0, 0.0,
-            0.0, 0.0, 0.0, c44, 0.0, 0.0,
-            0.0, 0.0, 0.0, 0.0, c44, 0.0,
-            0.0, 0.0, 0.0, 0.0, 0.0, c44,
+            c11, c12, c12, 0.0, 0.0, 0.0, c12, c11, c12, 0.0, 0.0, 0.0, c12, c12, c11, 0.0, 0.0,
+            0.0, 0.0, 0.0, 0.0, c44, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, c44, 0.0, 0.0, 0.0, 0.0, 0.0,
+            0.0, c44,
         )
     }
 
@@ -110,9 +107,15 @@ impl Material {
         let factor = e / (1.0 - nu * nu);
 
         nalgebra::Matrix3::new(
-            factor,         factor * nu, 0.0,
-            factor * nu,    factor,      0.0,
-            0.0,            0.0,         factor * (1.0 - nu) / 2.0,
+            factor,
+            factor * nu,
+            0.0,
+            factor * nu,
+            factor,
+            0.0,
+            0.0,
+            0.0,
+            factor * (1.0 - nu) / 2.0,
         )
     }
 
@@ -128,11 +131,7 @@ impl Material {
         let c12 = factor * nu;
         let c44 = factor * (1.0 - 2.0 * nu) / 2.0;
 
-        nalgebra::Matrix3::new(
-            c11, c12, 0.0,
-            c12, c11, 0.0,
-            0.0, 0.0, c44,
-        )
+        nalgebra::Matrix3::new(c11, c12, 0.0, c12, c11, 0.0, 0.0, 0.0, c44)
     }
 
     /// Axisymmetric constitutive matrix (for bodies of revolution).
@@ -160,10 +159,7 @@ impl Material {
         // [σ_θθ ]   [c12 c12 c11  0 ] [ε_θθ ]
         // [τ_rz ]   [ 0   0   0  c44] [γ_rz ]
         nalgebra::Matrix4::new(
-            c11, c12, c12, 0.0,
-            c12, c11, c12, 0.0,
-            c12, c12, c11, 0.0,
-            0.0, 0.0, 0.0, c44,
+            c11, c12, c12, 0.0, c12, c11, c12, 0.0, c12, c12, c11, 0.0, 0.0, 0.0, 0.0, c44,
         )
     }
 }
@@ -269,7 +265,13 @@ mod tests {
         let d = mat.constitutive_axisymmetric();
         // Check diagonal elements are positive
         for i in 0..4 {
-            assert!(d[(i, i)] > 0.0, "D[{},{}] = {} should be positive", i, i, d[(i, i)]);
+            assert!(
+                d[(i, i)] > 0.0,
+                "D[{},{}] = {} should be positive",
+                i,
+                i,
+                d[(i, i)]
+            );
         }
     }
 

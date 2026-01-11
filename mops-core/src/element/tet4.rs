@@ -93,12 +93,20 @@ impl Tet4 {
         // dN/dx = J^(-T) * dN/dξ
 
         let j = Matrix3::new(
-            x2 - x1, x3 - x1, x4 - x1,
-            y2 - y1, y3 - y1, y4 - y1,
-            z2 - z1, z3 - z1, z4 - z1,
+            x2 - x1,
+            x3 - x1,
+            x4 - x1,
+            y2 - y1,
+            y3 - y1,
+            y4 - y1,
+            z2 - z1,
+            z3 - z1,
+            z4 - z1,
         );
 
-        let j_inv = j.try_inverse().expect("Degenerate tetrahedron: Jacobian is singular");
+        let j_inv = j
+            .try_inverse()
+            .expect("Degenerate tetrahedron: Jacobian is singular");
         let j_inv_t = j_inv.transpose();
 
         // dN/dξ for nodes 1-4 in natural coords (L1, L2, L3, L4 = 1 - L1 - L2 - L3)
@@ -321,7 +329,13 @@ mod tests {
 
         // Diagonal elements should be positive
         for i in 0..12 {
-            assert!(k[(i, i)] > 0.0, "K[{},{}] = {} should be positive", i, i, k[(i, i)]);
+            assert!(
+                k[(i, i)] > 0.0,
+                "K[{},{}] = {} should be positive",
+                i,
+                i,
+                k[(i, i)]
+            );
         }
     }
 
@@ -373,10 +387,10 @@ mod tests {
         // Node 2 (0,1,0): [0, 0, 0]
         // Node 3 (0,0,1): [0, 0, 0]
         let displacements = [
-            0.0, 0.0, 0.0,      // node 0
-            0.001, 0.0, 0.0,    // node 1
-            0.0, 0.0, 0.0,      // node 2
-            0.0, 0.0, 0.0,      // node 3
+            0.0, 0.0, 0.0, // node 0
+            0.001, 0.0, 0.0, // node 1
+            0.0, 0.0, 0.0, // node 2
+            0.0, 0.0, 0.0, // node 3
         ];
 
         let stresses = tet.stress(&coords, &displacements, &mat);

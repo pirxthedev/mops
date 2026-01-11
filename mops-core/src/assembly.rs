@@ -4,10 +4,10 @@
 //! using Rayon for shared-memory parallelism.
 
 use crate::element::create_element;
+use crate::error::Result;
 use crate::material::Material;
 use crate::mesh::Mesh;
 use crate::sparse::{CsrMatrix, SparseVector, TripletMatrix};
-use crate::error::Result;
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -203,7 +203,8 @@ mod tests {
         mesh.add_node(Vector3::new(0.0, 1.0, 0.0));
         mesh.add_node(Vector3::new(0.0, 0.0, 1.0));
 
-        mesh.add_element(ElementType::Tet4, vec![0, 1, 2, 3]).unwrap();
+        mesh.add_element(ElementType::Tet4, vec![0, 1, 2, 3])
+            .unwrap();
 
         // Steel-like material
         let material = Material::steel();
@@ -305,9 +306,11 @@ mod tests {
         mesh.add_node(Vector3::new(0.5, 0.5, -1.0)); // 4 (below the shared face)
 
         // First tet: nodes 0, 1, 2, 3
-        mesh.add_element(ElementType::Tet4, vec![0, 1, 2, 3]).unwrap();
+        mesh.add_element(ElementType::Tet4, vec![0, 1, 2, 3])
+            .unwrap();
         // Second tet: nodes 0, 1, 2, 4 (shares face 0-1-2)
-        mesh.add_element(ElementType::Tet4, vec![0, 1, 2, 4]).unwrap();
+        mesh.add_element(ElementType::Tet4, vec![0, 1, 2, 4])
+            .unwrap();
 
         let material = Material::steel();
         let bcs: Vec<BoundaryCondition> = vec![];

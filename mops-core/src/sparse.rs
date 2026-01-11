@@ -190,12 +190,13 @@ mod tests {
 
         // Simulate element assembly: 2x2 element with dofs [0, 1] and [3, 4]
         let dofs = vec![0, 1, 3, 4];
-        let ke = DMatrix::from_row_slice(4, 4, &[
-            1.0, 0.5, 0.1, 0.0,
-            0.5, 2.0, 0.0, 0.2,
-            0.1, 0.0, 1.5, 0.3,
-            0.0, 0.2, 0.3, 2.5,
-        ]);
+        let ke = DMatrix::from_row_slice(
+            4,
+            4,
+            &[
+                1.0, 0.5, 0.1, 0.0, 0.5, 2.0, 0.0, 0.2, 0.1, 0.0, 1.5, 0.3, 0.0, 0.2, 0.3, 2.5,
+            ],
+        );
 
         triplet.add_submatrix(&dofs, &ke);
 

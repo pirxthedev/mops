@@ -15,13 +15,13 @@
 //! For very large problems (>100k DOFs), an iterative solver with AMG preconditioning
 //! would be more efficient, but that's not yet implemented.
 
-use crate::sparse::CsrMatrix;
 use crate::error::{Error, Result};
-use faer::sparse::{SparseColMat, SymbolicSparseColMat};
-use faer::sparse::linalg::solvers::{Llt, SymbolicLlt};
-use faer::sparse::linalg::LltError as SparseLltError;
+use crate::sparse::CsrMatrix;
 use faer::linalg::cholesky::llt::factor::LltError;
 use faer::prelude::*;
+use faer::sparse::linalg::solvers::{Llt, SymbolicLlt};
+use faer::sparse::linalg::LltError as SparseLltError;
+use faer::sparse::{SparseColMat, SymbolicSparseColMat};
 
 /// Linear solver interface.
 pub trait Solver: Send + Sync {
@@ -260,15 +260,19 @@ impl Solver for FaerCholeskySolver {
             .map_err(|_| Error::Solver("Symbolic Cholesky analysis failed".into()))?;
 
         // Numerical factorization
-        let llt = Llt::try_new_with_symbolic(symbolic, csc_ref, faer::Side::Lower)
-            .map_err(|e| match e {
-                SparseLltError::Generic(err) => Error::Solver(
-                    format!("Sparse Cholesky error: {:?}", err)
-                ),
-                SparseLltError::Numeric(LltError::NonPositivePivot { index }) => Error::SingularMatrix(
-                    format!("Matrix is not positive definite at pivot {}", index)
-                ),
-            })?;
+        let llt = Llt::try_new_with_symbolic(symbolic, csc_ref, faer::Side::Lower).map_err(
+            |e| match e {
+                SparseLltError::Generic(err) => {
+                    Error::Solver(format!("Sparse Cholesky error: {:?}", err))
+                }
+                SparseLltError::Numeric(LltError::NonPositivePivot { index }) => {
+                    Error::SingularMatrix(format!(
+                        "Matrix is not positive definite at pivot {}",
+                        index
+                    ))
+                }
+            },
+        )?;
 
         // Solve the system
         let mut x = faer::Mat::from_fn(n, 1, |i, _| rhs[i]);
@@ -312,8 +316,9 @@ impl CachedCholeskySolver {
     ///
     /// The matrix must have the same sparsity pattern as the one used for `analyze`.
     pub fn solve_with_cached_symbolic(&self, matrix: &CsrMatrix, rhs: &[f64]) -> Result<Vec<f64>> {
-        let symbolic = self.symbolic.as_ref()
-            .ok_or_else(|| Error::Solver("No cached symbolic factorization - call analyze() first".into()))?;
+        let symbolic = self.symbolic.as_ref().ok_or_else(|| {
+            Error::Solver("No cached symbolic factorization - call analyze() first".into())
+        })?;
 
         let n = matrix.nrows();
         if n == 0 {
@@ -329,12 +334,15 @@ impl CachedCholeskySolver {
         // Numerical factorization with cached symbolic
         let llt = Llt::try_new_with_symbolic(symbolic.clone(), csc.as_ref(), faer::Side::Lower)
             .map_err(|e| match e {
-                SparseLltError::Generic(err) => Error::Solver(
-                    format!("Sparse Cholesky error: {:?}", err)
-                ),
-                SparseLltError::Numeric(LltError::NonPositivePivot { index }) => Error::SingularMatrix(
-                    format!("Matrix is not positive definite at pivot {}", index)
-                ),
+                SparseLltError::Generic(err) => {
+                    Error::Solver(format!("Sparse Cholesky error: {:?}", err))
+                }
+                SparseLltError::Numeric(LltError::NonPositivePivot { index }) => {
+                    Error::SingularMatrix(format!(
+                        "Matrix is not positive definite at pivot {}",
+                        index
+                    ))
+                }
             })?;
 
         // Solve

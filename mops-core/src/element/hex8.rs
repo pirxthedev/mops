@@ -214,11 +214,7 @@ impl Element for Hex8 {
     }
 
     fn stiffness(&self, coords: &[Point3], material: &Material) -> DMatrix<f64> {
-        assert_eq!(
-            coords.len(),
-            8,
-            "Hex8 requires exactly 8 nodal coordinates"
-        );
+        assert_eq!(coords.len(), 8, "Hex8 requires exactly 8 nodal coordinates");
 
         let d = material.constitutive_3d();
         let mut k = DMatrix::zeros(24, 24);
@@ -250,11 +246,7 @@ impl Element for Hex8 {
         displacements: &[f64],
         material: &Material,
     ) -> Vec<StressTensor> {
-        assert_eq!(
-            coords.len(),
-            8,
-            "Hex8 requires exactly 8 nodal coordinates"
-        );
+        assert_eq!(coords.len(), 8, "Hex8 requires exactly 8 nodal coordinates");
         assert_eq!(
             displacements.len(),
             24,
@@ -288,11 +280,7 @@ impl Element for Hex8 {
     }
 
     fn volume(&self, coords: &[Point3]) -> f64 {
-        assert_eq!(
-            coords.len(),
-            8,
-            "Hex8 requires exactly 8 nodal coordinates"
-        );
+        assert_eq!(coords.len(), 8, "Hex8 requires exactly 8 nodal coordinates");
 
         let gauss_points = gauss_hex(2);
         let mut volume = 0.0;
@@ -351,10 +339,10 @@ mod tests {
     fn test_hex8_shape_functions_sum_to_one() {
         // Shape functions should sum to 1 at any point
         let test_points = [
-            (0.0, 0.0, 0.0),   // center
-            (1.0, 1.0, 1.0),   // corner
-            (-1.0, 0.5, 0.0),  // face
-            (0.5, 0.5, 0.5),   // arbitrary
+            (0.0, 0.0, 0.0),  // center
+            (1.0, 1.0, 1.0),  // corner
+            (-1.0, 0.5, 0.0), // face
+            (0.5, 0.5, 0.5),  // arbitrary
         ];
 
         for (xi, eta, zeta) in test_points {
@@ -488,14 +476,30 @@ mod tests {
         // Displacements: u = 0.001 * x for each node
         let strain_xx = 0.001;
         let displacements = [
-            0.0 * strain_xx, 0.0, 0.0,  // node 0: x=0
-            1.0 * strain_xx, 0.0, 0.0,  // node 1: x=1
-            1.0 * strain_xx, 0.0, 0.0,  // node 2: x=1
-            0.0 * strain_xx, 0.0, 0.0,  // node 3: x=0
-            0.0 * strain_xx, 0.0, 0.0,  // node 4: x=0
-            1.0 * strain_xx, 0.0, 0.0,  // node 5: x=1
-            1.0 * strain_xx, 0.0, 0.0,  // node 6: x=1
-            0.0 * strain_xx, 0.0, 0.0,  // node 7: x=0
+            0.0 * strain_xx,
+            0.0,
+            0.0, // node 0: x=0
+            1.0 * strain_xx,
+            0.0,
+            0.0, // node 1: x=1
+            1.0 * strain_xx,
+            0.0,
+            0.0, // node 2: x=1
+            0.0 * strain_xx,
+            0.0,
+            0.0, // node 3: x=0
+            0.0 * strain_xx,
+            0.0,
+            0.0, // node 4: x=0
+            1.0 * strain_xx,
+            0.0,
+            0.0, // node 5: x=1
+            1.0 * strain_xx,
+            0.0,
+            0.0, // node 6: x=1
+            0.0 * strain_xx,
+            0.0,
+            0.0, // node 7: x=0
         ];
 
         let stresses = hex.stress(&coords, &displacements, &mat);
