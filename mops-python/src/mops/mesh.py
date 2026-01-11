@@ -39,6 +39,70 @@ if TYPE_CHECKING:
     pass
 
 
+# Face definitions for each element type.
+# Each entry is a tuple of node indices defining a face (counter-clockwise when viewed from outside).
+# For 3D elements, faces are triangles or quads. For 2D elements, faces are edges.
+# Using corner nodes only (linear topology for face identification).
+ELEMENT_FACES = {
+    # 3D Tetrahedron: 4 triangular faces
+    # Standard ordering: Face normals point outward when nodes are counter-clockwise
+    "tet4": [
+        (0, 2, 1),  # Face 0: base (nodes 0,1,2), normal points -z
+        (0, 1, 3),  # Face 1: front face
+        (1, 2, 3),  # Face 2: right face
+        (2, 0, 3),  # Face 3: left face
+    ],
+    "tet10": [
+        (0, 2, 1),  # Same corner topology as tet4
+        (0, 1, 3),
+        (1, 2, 3),
+        (2, 0, 3),
+    ],
+    # 3D Hexahedron: 6 quadrilateral faces
+    # Standard brick ordering with nodes 0-3 on bottom (-z), 4-7 on top (+z)
+    "hex8": [
+        (0, 3, 2, 1),  # Face 0: bottom (-z)
+        (4, 5, 6, 7),  # Face 1: top (+z)
+        (0, 1, 5, 4),  # Face 2: front (-y)
+        (2, 3, 7, 6),  # Face 3: back (+y)
+        (0, 4, 7, 3),  # Face 4: left (-x)
+        (1, 2, 6, 5),  # Face 5: right (+x)
+    ],
+    "hex20": [
+        (0, 3, 2, 1),  # Same corner topology as hex8
+        (4, 5, 6, 7),
+        (0, 1, 5, 4),
+        (2, 3, 7, 6),
+        (0, 4, 7, 3),
+        (1, 2, 6, 5),
+    ],
+    # 2D Triangle: 3 edge "faces" (for 2D, faces are edges)
+    "tri3": [
+        (0, 1),  # Edge 0
+        (1, 2),  # Edge 1
+        (2, 0),  # Edge 2
+    ],
+    "tri6": [
+        (0, 1),  # Same corner topology as tri3
+        (1, 2),
+        (2, 0),
+    ],
+    # 2D Quadrilateral: 4 edge "faces"
+    "quad4": [
+        (0, 1),  # Edge 0: bottom
+        (1, 2),  # Edge 1: right
+        (2, 3),  # Edge 2: top
+        (3, 0),  # Edge 3: left
+    ],
+    "quad8": [
+        (0, 1),  # Same corner topology as quad4
+        (1, 2),
+        (2, 3),
+        (3, 0),
+    ],
+}
+
+
 # Edge definitions for each element type.
 # Each entry is a tuple of (node_index_1, node_index_2) defining an edge.
 # Only corner nodes are used for edges (linear topology).
@@ -644,6 +708,167 @@ class Mesh:
             plt.savefig(filename, dpi=dpi)
             plt.close(fig)
             return None
+
+    def get_all_faces(self) -> np.ndarray:
+        """Get all faces in the mesh as (element_idx, local_face_idx) pairs.
+
+        Returns:
+            Nx2 array where each row is [element_index, local_face_index].
+        """
+        if not hasattr(self, "_all_faces"):
+            elem_type = self.element_type
+            if elem_type not in ELEMENT_FACES:
+                raise MeshError(f"Face extraction not supported for element type: {elem_type}")
+
+            n_faces_per_elem = len(ELEMENT_FACES[elem_type])
+            n_elements = self.n_elements
+
+            # Create array of all (element_idx, local_face_idx) pairs
+            faces = np.zeros((n_elements * n_faces_per_elem, 2), dtype=np.int64)
+            for i in range(n_elements):
+                for j in range(n_faces_per_elem):
+                    faces[i * n_faces_per_elem + j] = [i, j]
+
+            self._all_faces = faces
+        return self._all_faces
+
+    def get_boundary_faces(self) -> np.ndarray:
+        """Get boundary faces (faces not shared between elements).
+
+        A face is on the boundary if it appears only once in the mesh
+        (not shared by two elements).
+
+        Returns:
+            Nx2 array of boundary face indices [element_idx, local_face_idx].
+        """
+        if not hasattr(self, "_boundary_faces"):
+            elem_type = self.element_type
+            if elem_type not in ELEMENT_FACES:
+                raise MeshError(f"Face extraction not supported for element type: {elem_type}")
+
+            face_defs = ELEMENT_FACES[elem_type]
+            elements = self.elements
+
+            # Build a dictionary mapping face node sets to (element_idx, local_face_idx)
+            # A boundary face appears exactly once
+            face_count: dict[frozenset[int], list[tuple[int, int]]] = {}
+
+            for elem_idx, elem in enumerate(elements):
+                for local_face_idx, face_def in enumerate(face_defs):
+                    # Get global node indices for this face
+                    face_nodes = frozenset(int(elem[n]) for n in face_def)
+                    if face_nodes not in face_count:
+                        face_count[face_nodes] = []
+                    face_count[face_nodes].append((elem_idx, local_face_idx))
+
+            # Boundary faces are those that appear exactly once
+            boundary = []
+            for face_nodes, occurrences in face_count.items():
+                if len(occurrences) == 1:
+                    boundary.append(occurrences[0])
+
+            self._boundary_faces = np.array(boundary, dtype=np.int64).reshape(-1, 2)
+        return self._boundary_faces
+
+    def get_face_nodes(self, element_idx: int, local_face_idx: int) -> np.ndarray:
+        """Get global node indices for a specific face.
+
+        Args:
+            element_idx: Element index.
+            local_face_idx: Local face index within the element.
+
+        Returns:
+            Array of global node indices forming this face.
+        """
+        elem_type = self.element_type
+        if elem_type not in ELEMENT_FACES:
+            raise MeshError(f"Face nodes not defined for element type: {elem_type}")
+
+        face_def = ELEMENT_FACES[elem_type][local_face_idx]
+        elem = self.elements[element_idx]
+        return np.array([elem[n] for n in face_def], dtype=np.int64)
+
+    def get_face_centroid(self, element_idx: int, local_face_idx: int) -> np.ndarray:
+        """Compute centroid of a face.
+
+        Args:
+            element_idx: Element index.
+            local_face_idx: Local face index within the element.
+
+        Returns:
+            3D coordinates of face centroid.
+        """
+        face_nodes = self.get_face_nodes(element_idx, local_face_idx)
+        coords = self.coords
+        return np.mean(coords[face_nodes], axis=0)
+
+    def get_face_normal(self, element_idx: int, local_face_idx: int) -> np.ndarray:
+        """Compute outward unit normal vector for a face.
+
+        For 3D elements (triangular/quad faces), computes cross product normal.
+        For 2D elements (edge faces), computes perpendicular in xy-plane.
+
+        Args:
+            element_idx: Element index.
+            local_face_idx: Local face index within the element.
+
+        Returns:
+            Unit normal vector (3D array).
+        """
+        face_nodes = self.get_face_nodes(element_idx, local_face_idx)
+        coords = self.coords
+
+        if len(face_nodes) >= 3:
+            # 3D face (triangle or quad): use cross product
+            p0 = coords[face_nodes[0]]
+            p1 = coords[face_nodes[1]]
+            p2 = coords[face_nodes[2]]
+            v1 = p1 - p0
+            v2 = p2 - p0
+            normal = np.cross(v1, v2)
+        elif len(face_nodes) == 2:
+            # 2D edge: rotate edge vector 90 degrees in xy-plane
+            p0 = coords[face_nodes[0]]
+            p1 = coords[face_nodes[1]]
+            edge = p1 - p0
+            # Perpendicular in xy-plane: (-dy, dx, 0)
+            normal = np.array([-edge[1], edge[0], 0.0])
+        else:
+            raise MeshError(f"Invalid face with {len(face_nodes)} nodes")
+
+        # Normalize
+        norm = np.linalg.norm(normal)
+        if norm < 1e-14:
+            raise MeshError("Degenerate face with zero area")
+        return normal / norm
+
+    def get_all_face_centroids(self) -> np.ndarray:
+        """Get centroids for all faces in the mesh.
+
+        Returns:
+            Nx3 array of face centroids, ordered by (element_idx, local_face_idx).
+        """
+        if not hasattr(self, "_face_centroids"):
+            all_faces = self.get_all_faces()
+            centroids = np.zeros((len(all_faces), 3), dtype=np.float64)
+            for i, (elem_idx, local_face_idx) in enumerate(all_faces):
+                centroids[i] = self.get_face_centroid(elem_idx, local_face_idx)
+            self._face_centroids = centroids
+        return self._face_centroids
+
+    def get_all_face_normals(self) -> np.ndarray:
+        """Get unit normals for all faces in the mesh.
+
+        Returns:
+            Nx3 array of unit normal vectors, ordered by (element_idx, local_face_idx).
+        """
+        if not hasattr(self, "_face_normals"):
+            all_faces = self.get_all_faces()
+            normals = np.zeros((len(all_faces), 3), dtype=np.float64)
+            for i, (elem_idx, local_face_idx) in enumerate(all_faces):
+                normals[i] = self.get_face_normal(elem_idx, local_face_idx)
+            self._face_normals = normals
+        return self._face_normals
 
     def __repr__(self) -> str:
         return f"Mesh(nodes={self.n_nodes}, elements={self.n_elements}, type={self.element_type})"
