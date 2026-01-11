@@ -341,3 +341,189 @@ class TestMeshSolveIntegration:
         # Loaded nodes should have positive x displacement
         max_disp = results.max_displacement()
         assert max_disp > 0, "Should have positive displacement"
+
+
+class TestMeshPlot:
+    """Tests for Mesh.plot() visualization."""
+
+    @pytest.fixture
+    def tet4_mesh(self):
+        """Create a simple tet4 mesh for testing."""
+        nodes = np.array([
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+        ], dtype=np.float64)
+        elements = np.array([[0, 1, 2, 3]], dtype=np.int64)
+        return Mesh.from_arrays(nodes, elements, "tet4")
+
+    @pytest.fixture
+    def hex8_mesh(self):
+        """Create a unit cube hex8 mesh for testing."""
+        nodes = np.array([
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [1.0, 1.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [1.0, 0.0, 1.0],
+            [1.0, 1.0, 1.0],
+            [0.0, 1.0, 1.0],
+        ], dtype=np.float64)
+        elements = np.array([[0, 1, 2, 3, 4, 5, 6, 7]], dtype=np.int64)
+        return Mesh.from_arrays(nodes, elements, "hex8")
+
+    def test_plot_returns_png_bytes(self, tet4_mesh):
+        """plot() without filename returns PNG bytes."""
+        pytest.importorskip("matplotlib")
+
+        png = tet4_mesh.plot()
+
+        assert isinstance(png, bytes)
+        assert len(png) > 0
+        # Check PNG magic bytes
+        assert png[:8] == b"\x89PNG\r\n\x1a\n"
+
+    def test_plot_saves_to_file(self, tet4_mesh, tmp_path):
+        """plot() with filename saves to file and returns None."""
+        pytest.importorskip("matplotlib")
+
+        filepath = tmp_path / "mesh.png"
+        result = tet4_mesh.plot(str(filepath))
+
+        assert result is None
+        assert filepath.exists()
+        assert filepath.stat().st_size > 0
+
+        # Verify it's a valid PNG
+        with open(filepath, "rb") as f:
+            magic = f.read(8)
+        assert magic == b"\x89PNG\r\n\x1a\n"
+
+    def test_plot_with_labels(self, tet4_mesh):
+        """plot() with show_labels=True includes node labels."""
+        pytest.importorskip("matplotlib")
+
+        png = tet4_mesh.plot(show_labels=True)
+
+        assert isinstance(png, bytes)
+        assert len(png) > 0
+
+    def test_plot_without_nodes(self, tet4_mesh):
+        """plot() with show_nodes=False hides node markers."""
+        pytest.importorskip("matplotlib")
+
+        png = tet4_mesh.plot(show_nodes=False)
+
+        assert isinstance(png, bytes)
+        assert len(png) > 0
+
+    def test_plot_without_edges(self, tet4_mesh):
+        """plot() with show_edges=False hides edges."""
+        pytest.importorskip("matplotlib")
+
+        png = tet4_mesh.plot(show_edges=False)
+
+        assert isinstance(png, bytes)
+        assert len(png) > 0
+
+    def test_plot_hex8(self, hex8_mesh):
+        """plot() works with hex8 elements."""
+        pytest.importorskip("matplotlib")
+
+        png = hex8_mesh.plot()
+
+        assert isinstance(png, bytes)
+        assert len(png) > 0
+
+    def test_plot_custom_colors(self, tet4_mesh):
+        """plot() accepts custom colors."""
+        pytest.importorskip("matplotlib")
+
+        png = tet4_mesh.plot(edge_color="red", node_color="green")
+
+        assert isinstance(png, bytes)
+        assert len(png) > 0
+
+    def test_plot_custom_view(self, tet4_mesh):
+        """plot() accepts custom view angles."""
+        pytest.importorskip("matplotlib")
+
+        png = tet4_mesh.plot(elev=60, azim=120)
+
+        assert isinstance(png, bytes)
+        assert len(png) > 0
+
+    def test_plot_custom_figsize(self, tet4_mesh):
+        """plot() accepts custom figure size."""
+        pytest.importorskip("matplotlib")
+
+        png1 = tet4_mesh.plot(figsize=(4, 4), dpi=50)
+        png2 = tet4_mesh.plot(figsize=(12, 12), dpi=50)
+
+        # Larger figure should produce larger file
+        assert len(png2) > len(png1)
+
+    def test_plot_multi_element_mesh(self):
+        """plot() works with multiple elements."""
+        pytest.importorskip("matplotlib")
+
+        # Two tetrahedra sharing a face
+        nodes = np.array([
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [1.0, 1.0, 1.0],
+        ], dtype=np.float64)
+        elements = np.array([
+            [0, 1, 2, 3],
+            [1, 2, 3, 4],
+        ], dtype=np.int64)
+        mesh = Mesh.from_arrays(nodes, elements, "tet4")
+
+        png = mesh.plot()
+
+        assert isinstance(png, bytes)
+        assert len(png) > 0
+
+
+class TestMeshElements:
+    """Tests for Mesh.elements property."""
+
+    def test_elements_property(self):
+        """elements property returns element connectivity."""
+        nodes = np.array([
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+        ], dtype=np.float64)
+        elements = np.array([[0, 1, 2, 3]], dtype=np.int64)
+
+        mesh = Mesh.from_arrays(nodes, elements, "tet4")
+        result = mesh.elements
+
+        assert result.shape == (1, 4)
+        np.testing.assert_array_equal(result, elements)
+
+    def test_elements_multi_element(self):
+        """elements property works with multiple elements."""
+        nodes = np.array([
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [1.0, 1.0, 1.0],
+        ], dtype=np.float64)
+        elements = np.array([
+            [0, 1, 2, 3],
+            [1, 2, 3, 4],
+        ], dtype=np.int64)
+
+        mesh = Mesh.from_arrays(nodes, elements, "tet4")
+        result = mesh.elements
+
+        assert result.shape == (2, 4)
+        np.testing.assert_array_equal(result, elements)

@@ -26,6 +26,7 @@ Example::
 
 from __future__ import annotations
 
+import io
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -36,6 +37,45 @@ from mops._core import Mesh as _CoreMesh
 
 if TYPE_CHECKING:
     pass
+
+
+# Edge definitions for each element type.
+# Each entry is a tuple of (node_index_1, node_index_2) defining an edge.
+# Only corner nodes are used for edges (linear topology).
+ELEMENT_EDGES = {
+    # 3D elements
+    "tet4": [
+        (0, 1), (1, 2), (2, 0),  # base triangle
+        (0, 3), (1, 3), (2, 3),  # edges to apex
+    ],
+    "tet10": [
+        (0, 1), (1, 2), (2, 0),  # base triangle (using corner nodes only)
+        (0, 3), (1, 3), (2, 3),  # edges to apex
+    ],
+    "hex8": [
+        (0, 1), (1, 2), (2, 3), (3, 0),  # bottom face
+        (4, 5), (5, 6), (6, 7), (7, 4),  # top face
+        (0, 4), (1, 5), (2, 6), (3, 7),  # vertical edges
+    ],
+    "hex20": [
+        (0, 1), (1, 2), (2, 3), (3, 0),  # bottom face (corner nodes only)
+        (4, 5), (5, 6), (6, 7), (7, 4),  # top face
+        (0, 4), (1, 5), (2, 6), (3, 7),  # vertical edges
+    ],
+    # 2D elements
+    "tri3": [
+        (0, 1), (1, 2), (2, 0),  # triangle edges
+    ],
+    "tri6": [
+        (0, 1), (1, 2), (2, 0),  # triangle edges (corner nodes only)
+    ],
+    "quad4": [
+        (0, 1), (1, 2), (2, 3), (3, 0),  # quad edges
+    ],
+    "quad8": [
+        (0, 1), (1, 2), (2, 3), (3, 0),  # quad edges (corner nodes only)
+    ],
+}
 
 
 # Mapping from Gmsh element type codes to mops element types.
@@ -438,9 +478,172 @@ class Mesh:
         return self._inner.coords
 
     @property
+    def elements(self) -> NDArray[np.int64]:
+        """Element connectivity as MxK array (node indices)."""
+        return self._inner.elements
+
+    @property
     def _core(self) -> _CoreMesh:
         """Access the underlying Rust Mesh (internal use only)."""
         return self._inner
+
+    def plot(
+        self,
+        filename: str | Path | None = None,
+        *,
+        show_nodes: bool = True,
+        show_edges: bool = True,
+        show_labels: bool = False,
+        node_size: float = 20,
+        edge_color: str = "black",
+        node_color: str = "blue",
+        figsize: tuple[float, float] = (8, 8),
+        dpi: int = 100,
+        elev: float = 30,
+        azim: float = 45,
+    ) -> bytes | None:
+        """Plot mesh geometry for visualization.
+
+        This method renders the mesh as a 3D wireframe plot showing nodes
+        and element edges. Useful for verifying mesh creation and geometry.
+
+        Args:
+            filename: If provided, save the plot to this file path. If None,
+                returns the plot as PNG bytes (useful for LLM consumption).
+            show_nodes: Whether to show node markers (default True).
+            show_edges: Whether to show element edges (default True).
+            show_labels: Whether to show node/element index labels (default False).
+            node_size: Size of node markers in points (default 20).
+            edge_color: Color of element edges (default "black").
+            node_color: Color of node markers (default "blue").
+            figsize: Figure size in inches as (width, height) (default (8, 8)).
+            dpi: Resolution in dots per inch (default 100).
+            elev: Elevation angle in degrees for 3D view (default 30).
+            azim: Azimuth angle in degrees for 3D view (default 45).
+
+        Returns:
+            If filename is None, returns PNG image as bytes.
+            If filename is provided, saves to file and returns None.
+
+        Raises:
+            ImportError: If matplotlib is not installed.
+
+        Example::
+
+            mesh = Mesh.from_arrays(nodes, elements, "tet4")
+
+            # Get PNG bytes for display
+            png_bytes = mesh.plot()
+
+            # Save to file
+            mesh.plot("my_mesh.png")
+
+            # Customize appearance
+            mesh.plot(show_labels=True, node_color="red", elev=60, azim=30)
+        """
+        try:
+            import matplotlib
+            matplotlib.use("Agg")  # Headless backend
+            import matplotlib.pyplot as plt
+            from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
+        except ImportError:
+            raise ImportError(
+                "matplotlib required for mesh plotting. "
+                "Install with: pip install matplotlib"
+            )
+
+        coords = self.coords
+        elements = self.elements
+        elem_type = self.element_type
+
+        # Determine if 2D or 3D
+        is_2d = elem_type in ("tri3", "tri6", "quad4", "quad8")
+
+        fig = plt.figure(figsize=figsize, dpi=dpi)
+
+        if is_2d:
+            ax = fig.add_subplot(111)
+            ax.set_aspect("equal")
+        else:
+            ax = fig.add_subplot(111, projection="3d")
+            ax.view_init(elev=elev, azim=azim)
+
+        # Draw edges
+        if show_edges and elem_type in ELEMENT_EDGES:
+            edge_defs = ELEMENT_EDGES[elem_type]
+            for elem in elements:
+                for i1, i2 in edge_defs:
+                    n1, n2 = elem[i1], elem[i2]
+                    if is_2d:
+                        ax.plot(
+                            [coords[n1, 0], coords[n2, 0]],
+                            [coords[n1, 1], coords[n2, 1]],
+                            color=edge_color,
+                            linewidth=0.8,
+                        )
+                    else:
+                        ax.plot(
+                            [coords[n1, 0], coords[n2, 0]],
+                            [coords[n1, 1], coords[n2, 1]],
+                            [coords[n1, 2], coords[n2, 2]],
+                            color=edge_color,
+                            linewidth=0.8,
+                        )
+
+        # Draw nodes
+        if show_nodes:
+            if is_2d:
+                ax.scatter(
+                    coords[:, 0],
+                    coords[:, 1],
+                    s=node_size,
+                    c=node_color,
+                    zorder=5,
+                )
+            else:
+                ax.scatter(
+                    coords[:, 0],
+                    coords[:, 1],
+                    coords[:, 2],
+                    s=node_size,
+                    c=node_color,
+                )
+
+        # Draw labels
+        if show_labels:
+            for i, coord in enumerate(coords):
+                if is_2d:
+                    ax.annotate(
+                        str(i),
+                        (coord[0], coord[1]),
+                        textcoords="offset points",
+                        xytext=(3, 3),
+                        fontsize=8,
+                    )
+                else:
+                    ax.text(coord[0], coord[1], coord[2], str(i), fontsize=8)
+
+        # Labels
+        ax.set_xlabel("X")
+        ax.set_ylabel("Y")
+        if not is_2d:
+            ax.set_zlabel("Z")
+
+        ax.set_title(f"Mesh: {self.n_nodes} nodes, {self.n_elements} {elem_type} elements")
+
+        plt.tight_layout()
+
+        # Return bytes or save to file
+        if filename is None:
+            buf = io.BytesIO()
+            plt.savefig(buf, format="png", dpi=dpi)
+            plt.close(fig)
+            buf.seek(0)
+            return buf.read()
+        else:
+            plt.savefig(filename, dpi=dpi)
+            plt.close(fig)
+            return None
 
     def __repr__(self) -> str:
         return f"Mesh(nodes={self.n_nodes}, elements={self.n_elements}, type={self.element_type})"

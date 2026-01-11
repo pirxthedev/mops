@@ -199,6 +199,20 @@ impl PyMesh {
         PyArray2::from_vec2(py, &data).expect("from_vec2 should succeed")
     }
 
+    /// Get element connectivity as MxK numpy array.
+    ///
+    /// Returns:
+    ///     2D numpy array of shape (n_elements, nodes_per_element) containing node indices
+    #[getter]
+    fn elements<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<i64>> {
+        let elements = self.inner.elements();
+        let data: Vec<Vec<i64>> = elements
+            .iter()
+            .map(|e| e.nodes.iter().map(|&n| n as i64).collect())
+            .collect();
+        PyArray2::from_vec2(py, &data).expect("from_vec2 should succeed")
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "Mesh(nodes={}, elements={})",
