@@ -722,6 +722,192 @@ fn solve_simple(
     })
 }
 
+/// Solve a FEA problem with per-node force specification.
+///
+/// This is an extended version of solve_simple that accepts forces specified
+/// per-node, allowing different forces on different nodes (e.g., for pressure loads).
+///
+/// Args:
+///     mesh: Finite element mesh
+///     material: Material properties
+///     constraints: Nx3 array of (node_index, dof_index, value) for displacement constraints.
+///                  dof_index: 0=ux, 1=uy, 2=uz
+///     forces: Nx4 array of (node_index, fx, fy, fz) for nodal forces.
+///             Each row specifies the force vector applied to a specific node.
+///     config: Optional solver configuration
+#[pyfunction]
+#[pyo3(signature = (mesh, material, constraints, forces, config=None))]
+fn solve_with_forces(
+    mesh: &PyMesh,
+    material: &PyMaterial,
+    constraints: PyReadonlyArray2<f64>,
+    forces: PyReadonlyArray2<f64>,
+    config: Option<&PySolverConfig>,
+) -> PyResult<PyResults> {
+    let core_material = material.to_core();
+
+    // Build boundary conditions
+    let constraints_array = constraints.as_array();
+    let forces_array = forces.as_array();
+
+    // Validate constraints array shape
+    let constraints_shape = constraints.shape();
+    if constraints_shape.len() != 2 || constraints_shape[1] != 3 {
+        return Err(PyValueError::new_err(
+            "constraints must be Nx3 array with columns (node_index, dof_index, value)",
+        ));
+    }
+
+    // Validate forces array shape
+    let forces_shape = forces.shape();
+    if forces_shape.len() != 2 || forces_shape[1] != 4 {
+        return Err(PyValueError::new_err(
+            "forces must be Nx4 array with columns (node_index, fx, fy, fz)",
+        ));
+    }
+
+    let mut bcs = Vec::new();
+
+    // Add displacement constraints from the Nx3 array
+    for i in 0..constraints_shape[0] {
+        let node = constraints_array[[i, 0]] as usize;
+        let dof = constraints_array[[i, 1]] as usize;
+        let value = constraints_array[[i, 2]];
+
+        if dof > 2 {
+            return Err(PyValueError::new_err(format!(
+                "Invalid DOF index {} at constraint row {}. Valid: 0 (ux), 1 (uy), 2 (uz)",
+                dof, i
+            )));
+        }
+
+        bcs.push(BoundaryCondition::Displacement { node, dof, value });
+    }
+
+    // Add per-node forces from the Nx4 array
+    for i in 0..forces_shape[0] {
+        let node = forces_array[[i, 0]] as usize;
+        let fx = forces_array[[i, 1]];
+        let fy = forces_array[[i, 2]];
+        let fz = forces_array[[i, 3]];
+
+        // Add non-zero force components
+        if fx.abs() > 1e-15 {
+            bcs.push(BoundaryCondition::Force {
+                node,
+                dof: 0,
+                value: fx,
+            });
+        }
+        if fy.abs() > 1e-15 {
+            bcs.push(BoundaryCondition::Force {
+                node,
+                dof: 1,
+                value: fy,
+            });
+        }
+        if fz.abs() > 1e-15 {
+            bcs.push(BoundaryCondition::Force {
+                node,
+                dof: 2,
+                value: fz,
+            });
+        }
+    }
+
+    // Assemble the system
+    let options = AssemblyOptions::default();
+    let system = assemble(&mesh.inner, &core_material, &bcs, &options)
+        .map_err(|e| PyRuntimeError::new_err(format!("Assembly error: {}", e)))?;
+
+    // Apply constraints by elimination
+    // Build reduced system excluding constrained DOFs
+    let n_dofs = system.n_dofs;
+    let free_dofs: Vec<usize> = (0..n_dofs)
+        .filter(|dof| !system.constraints.contains_key(dof))
+        .collect();
+
+    if free_dofs.is_empty() {
+        // All DOFs constrained - solution is prescribed values
+        let mut displacements = vec![0.0; n_dofs];
+        for (&dof, &value) in &system.constraints {
+            displacements[dof] = value;
+        }
+        // Recover stresses from constrained displacements
+        let stress_field = recover_stresses(&mesh.inner, &core_material, &displacements);
+        let (element_stresses, von_mises_stresses) = extract_stress_data(&stress_field);
+        return Ok(PyResults {
+            displacements,
+            n_nodes: mesh.inner.n_nodes(),
+            n_elements: mesh.inner.n_elements(),
+            element_stresses,
+            von_mises_stresses,
+            solve_stats: None, // No solver used, all DOFs constrained
+        });
+    }
+
+    // Create mapping from free DOF indices to reduced indices
+    let mut dof_to_reduced: HashMap<usize, usize> = HashMap::new();
+    for (reduced_idx, &dof) in free_dofs.iter().enumerate() {
+        dof_to_reduced.insert(dof, reduced_idx);
+    }
+
+    // Build reduced system
+    let n_free = free_dofs.len();
+    let mut reduced_triplet = mops_core::sparse::TripletMatrix::new(n_free, n_free);
+    let mut reduced_rhs = vec![0.0; n_free];
+
+    // Copy relevant entries from full stiffness matrix
+    let k = &system.stiffness;
+    let row_offsets = k.row_offsets();
+    let col_indices = k.col_indices();
+    let values = k.values();
+
+    for row in 0..k.nrows() {
+        if let Some(&reduced_row) = dof_to_reduced.get(&row) {
+            for idx in row_offsets[row]..row_offsets[row + 1] {
+                let col = col_indices[idx];
+                if let Some(&reduced_col) = dof_to_reduced.get(&col) {
+                    reduced_triplet.add(reduced_row, reduced_col, values[idx]);
+                }
+            }
+            reduced_rhs[reduced_row] = system.rhs[row];
+        }
+    }
+
+    let reduced_matrix = reduced_triplet.to_csr();
+
+    // Solve the reduced system with statistics
+    // Use config if provided, otherwise use defaults
+    let core_config = config.map(|c| c.to_core()).unwrap_or_default();
+    let solver = select_solver(&core_config, n_free);
+    let (reduced_solution, solve_stats) = solver
+        .solve_with_stats(&reduced_matrix, &reduced_rhs)
+        .map_err(|e| PyRuntimeError::new_err(format!("Solver error: {}", e)))?;
+
+    // Reconstruct full displacement vector
+    let mut displacements = vec![0.0; n_dofs];
+    for (reduced_idx, &dof) in free_dofs.iter().enumerate() {
+        displacements[dof] = reduced_solution[reduced_idx];
+    }
+    for (&dof, &value) in &system.constraints {
+        displacements[dof] = value;
+    }
+
+    // Recover stresses from displacement solution
+    let stress_field = recover_stresses(&mesh.inner, &core_material, &displacements);
+    let (element_stresses, von_mises_stresses) = extract_stress_data(&stress_field);
+
+    Ok(PyResults {
+        displacements,
+        n_nodes: mesh.inner.n_nodes(),
+        n_elements: mesh.inner.n_elements(),
+        element_stresses,
+        von_mises_stresses,
+        solve_stats: Some(solve_stats.into()),
+    })
+}
+
 /// Extract stress data from StressField into arrays for PyResults.
 fn extract_stress_data(stress_field: &StressField) -> (Vec<[f64; 6]>, Vec<f64>) {
     let element_stresses: Vec<[f64; 6]> = stress_field
@@ -970,6 +1156,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PySolveStats>()?;
     m.add_class::<PyResults>()?;
     m.add_function(wrap_pyfunction!(solve_simple, m)?)?;
+    m.add_function(wrap_pyfunction!(solve_with_forces, m)?)?;
     m.add_function(wrap_pyfunction!(element_stiffness, m)?)?;
     m.add_function(wrap_pyfunction!(element_volume, m)?)?;
     m.add_function(wrap_pyfunction!(compute_element_stress, m)?)?;

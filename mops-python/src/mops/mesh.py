@@ -842,6 +842,62 @@ class Mesh:
             raise MeshError("Degenerate face with zero area")
         return normal / norm
 
+    def get_face_area(self, element_idx: int, local_face_idx: int) -> float:
+        """Compute area of a face.
+
+        For 3D elements with triangular faces: area = 0.5 * |v1 x v2|
+        For 3D elements with quadrilateral faces: split into triangles and sum.
+        For 2D elements (edges): returns edge length (for pressure = force/length).
+
+        Args:
+            element_idx: Element index.
+            local_face_idx: Local face index within the element.
+
+        Returns:
+            Face area (or edge length for 2D elements).
+        """
+        face_nodes = self.get_face_nodes(element_idx, local_face_idx)
+        coords = self.coords
+
+        n_nodes = len(face_nodes)
+
+        if n_nodes == 3:
+            # Triangle: area = 0.5 * |v1 x v2|
+            p0 = coords[face_nodes[0]]
+            p1 = coords[face_nodes[1]]
+            p2 = coords[face_nodes[2]]
+            v1 = p1 - p0
+            v2 = p2 - p0
+            cross = np.cross(v1, v2)
+            return 0.5 * np.linalg.norm(cross)
+
+        elif n_nodes == 4:
+            # Quadrilateral: split into two triangles (0-1-2 and 0-2-3)
+            p0 = coords[face_nodes[0]]
+            p1 = coords[face_nodes[1]]
+            p2 = coords[face_nodes[2]]
+            p3 = coords[face_nodes[3]]
+
+            # Triangle 0-1-2
+            v1 = p1 - p0
+            v2 = p2 - p0
+            area1 = 0.5 * np.linalg.norm(np.cross(v1, v2))
+
+            # Triangle 0-2-3
+            v3 = p3 - p0
+            area2 = 0.5 * np.linalg.norm(np.cross(v2, v3))
+
+            return area1 + area2
+
+        elif n_nodes == 2:
+            # Edge (2D): return length
+            p0 = coords[face_nodes[0]]
+            p1 = coords[face_nodes[1]]
+            return np.linalg.norm(p1 - p0)
+
+        else:
+            raise MeshError(f"Unsupported face with {n_nodes} nodes")
+
     def get_all_face_centroids(self) -> np.ndarray:
         """Get centroids for all faces in the mesh.
 

@@ -212,8 +212,9 @@ class Model:
 
         This evaluates all queries and calls the Rust solver.
         """
-        from mops._core import solve_simple
-        from mops.query import Nodes
+        from mops._core import solve_with_forces
+        from mops.loads import Force, Pressure
+        from mops.query import FaceQuery, NodeQuery
 
         # Validate model completeness
         if not self._state.materials:
@@ -250,31 +251,86 @@ class Model:
             # Empty constraints array with correct shape
             constraints = np.zeros((0, 3), dtype=np.float64)
 
-        # Evaluate loads to get loaded node indices and force vector
-        loaded_nodes = []
-        load_vector = np.zeros(3)
+        # Evaluate loads: accumulate nodal forces from both Force and Pressure loads
+        # Key: node_index, Value: [fx, fy, fz] force components
+        nodal_forces: dict[int, np.ndarray] = {}
+
         for query, load in self._state.loads:
-            node_indices = query.evaluate(self._state.mesh, components)
-            loaded_nodes.extend(node_indices)
-            # Accumulate force components
-            if hasattr(load, "fx"):
-                load_vector[0] += load.fx
-            if hasattr(load, "fy"):
-                load_vector[1] += load.fy
-            if hasattr(load, "fz"):
-                load_vector[2] += load.fz
-        loaded_nodes = np.array(list(set(loaded_nodes)), dtype=np.int64)
+            if isinstance(load, Force) and isinstance(query, NodeQuery):
+                # Point force at nodes
+                node_indices = query.evaluate(self._state.mesh, components)
+                force_vec = np.array([load.fx, load.fy, load.fz])
+                for node_idx in node_indices:
+                    if node_idx not in nodal_forces:
+                        nodal_forces[node_idx] = np.zeros(3)
+                    nodal_forces[node_idx] += force_vec
+
+            elif isinstance(load, Pressure) and isinstance(query, FaceQuery):
+                # Pressure load on faces - convert to consistent nodal forces
+                # Pressure acts in the negative normal direction (into the surface)
+                face_indices = query.evaluate(self._state.mesh, components)
+
+                for elem_idx, local_face_idx in face_indices:
+                    # Get face properties
+                    face_nodes = self._state.mesh.get_face_nodes(elem_idx, local_face_idx)
+                    face_area = self._state.mesh.get_face_area(elem_idx, local_face_idx)
+                    face_normal = self._state.mesh.get_face_normal(elem_idx, local_face_idx)
+
+                    # Total force on face: F = pressure * area
+                    # Direction: negative normal (pressure pushes into surface)
+                    total_force = -load.value * face_area * face_normal
+
+                    # Distribute force equally to all face nodes (consistent nodal forces
+                    # for constant pressure on linear elements)
+                    n_face_nodes = len(face_nodes)
+                    force_per_node = total_force / n_face_nodes
+
+                    for node_idx in face_nodes:
+                        if node_idx not in nodal_forces:
+                            nodal_forces[node_idx] = np.zeros(3)
+                        nodal_forces[node_idx] += force_per_node
+
+            elif isinstance(load, Force) and isinstance(query, FaceQuery):
+                # Force applied to face - distribute to face nodes
+                face_indices = query.evaluate(self._state.mesh, components)
+                force_vec = np.array([load.fx, load.fy, load.fz])
+
+                for elem_idx, local_face_idx in face_indices:
+                    face_nodes = self._state.mesh.get_face_nodes(elem_idx, local_face_idx)
+                    n_face_nodes = len(face_nodes)
+                    force_per_node = force_vec / n_face_nodes
+
+                    for node_idx in face_nodes:
+                        if node_idx not in nodal_forces:
+                            nodal_forces[node_idx] = np.zeros(3)
+                        nodal_forces[node_idx] += force_per_node
+
+            elif isinstance(load, Pressure) and isinstance(query, NodeQuery):
+                raise ValueError(
+                    "Pressure loads must be applied to faces (FaceQuery), not nodes. "
+                    "Use Faces.where(...) or Faces.on_boundary() to select faces."
+                )
+
+        # Convert nodal_forces dict to arrays for the solver
+        if not nodal_forces:
+            raise ValueError("No loads produced any nodal forces")
+
+        # Build forces array: Nx4 where each row is [node_idx, fx, fy, fz]
+        force_rows = []
+        for node_idx, force_vec in nodal_forces.items():
+            force_rows.append([float(node_idx), force_vec[0], force_vec[1], force_vec[2]])
+
+        forces = np.array(force_rows, dtype=np.float64)
 
         # Pass the underlying Rust mesh to the solver
         mesh = self._state.mesh
         core_mesh = mesh._inner if hasattr(mesh, "_inner") else mesh
 
-        return solve_simple(
+        return solve_with_forces(
             core_mesh,
             material,
             constraints,
-            loaded_nodes,
-            load_vector,
+            forces,
             config,
         )
 

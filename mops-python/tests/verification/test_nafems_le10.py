@@ -61,11 +61,13 @@ import pytest
 
 from mops import (
     Elements,
+    Faces,
     Force,
     Material,
     Mesh,
     Model,
     Nodes,
+    Pressure,
     solve,
 )
 
@@ -716,38 +718,23 @@ class TestNAFEMSLE10Benchmark:
 
         SIMPLIFIED MODEL (due to solver limitation):
         - Bottom surface (z=0): Fixed (all DOFs) - simulates anti-symmetry
-        - Top surface: Pressure applied in -z direction
+        - Top surface: Pressure applied in -z direction (using native Pressure loads)
 
         This produces bending but may differ from true LE10 results.
         """
-        coords = mesh.coords
-
         # Get bottom surface nodes to fix completely (simulating anti-symmetry)
         bottom_nodes = get_nodes_on_bottom_surface(mesh)
 
-        # Get top surface nodes for pressure loading
-        top_nodes = get_nodes_on_top_surface(mesh)
-
-        # Compute equivalent nodal forces from pressure
-        forces = compute_pressure_force_per_node(mesh, top_nodes)
-
-        # Build model - fix bottom surface completely
+        # Build model with native pressure load on top surface
+        # APPLIED_PRESSURE is in MPa, Pressure expects Pa, but since we use
+        # mm units throughout (E is in MPa), we keep pressure in MPa for consistency
+        # Actually the model uses mm/MPa unit system, so 1 MPa pressure is correct.
         model = (
             Model(mesh, materials={"steel": material})
             .assign(Elements.all(), material="steel")
             .constrain(Nodes.by_indices(bottom_nodes), dofs=["ux", "uy", "uz"])
+            .load(Faces.where(z=HALF_THICKNESS), Pressure(APPLIED_PRESSURE))
         )
-
-        # Apply forces to each top surface node
-        for node_idx, force_vec in forces.items():
-            # Skip if force is negligible
-            if np.linalg.norm(force_vec) < 1e-10:
-                continue
-
-            model = model.load(
-                Nodes.by_indices([node_idx]),
-                Force(fx=force_vec[0], fy=force_vec[1], fz=force_vec[2])
-            )
 
         return model
 
