@@ -30,7 +30,7 @@ Example usage::
 from mops._core import (
     Material,
     Mesh as _CoreMesh,
-    Results,
+    Results as _CoreResults,
     SolverConfig,
     compute_element_stress,
     element_stiffness,
@@ -43,6 +43,7 @@ from mops.mesh import Mesh, MeshError
 from mops.model import Model
 from mops.loads import Force, Pressure, Moment
 from mops.query import Nodes, Elements, Faces
+from mops.results import Results
 
 
 def _unwrap_mesh(mesh):
@@ -120,4 +121,5 @@ def solve(model: Model, config: SolverConfig | None = None) -> Results:
     Raises:
         MopsError: If the model is incomplete or solver fails
     """
-    return model._solve(config)
+    core_results = model._solve(config)
+    return Results(core_results)
