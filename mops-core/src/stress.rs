@@ -120,6 +120,10 @@ impl StressField {
 /// let stresses = recover_stresses(&mesh, &material, &displacements);
 /// println!("Max von Mises stress: {:.2} Pa", stresses.max_von_mises());
 /// ```
+///
+/// # Note
+///
+/// For multi-material analysis, use `recover_stresses_with_materials` instead.
 pub fn recover_stresses(mesh: &Mesh, material: &Material, displacements: &[f64]) -> StressField {
     // Get DOFs per node from mesh (2 for 2D elements, 3 for 3D elements)
     let dofs_per_node = mesh.dofs_per_node().unwrap_or(3);
@@ -154,6 +158,78 @@ pub fn recover_stresses(mesh: &Mesh, material: &Material, displacements: &[f64])
             }
 
             // Compute stress at integration points
+            let stresses = element.stress(&coords, &elem_displacements, material);
+
+            ElementStress {
+                element_id: elem_idx,
+                integration_point_stresses: stresses,
+            }
+        })
+        .collect();
+
+    StressField { element_stresses }
+}
+
+/// Recover stresses with per-element material assignments.
+///
+/// This version allows stress recovery when different elements have different
+/// materials assigned. The correct constitutive relationship is used for each
+/// element to compute accurate stresses.
+///
+/// # Arguments
+///
+/// * `mesh` - The finite element mesh
+/// * `materials` - List of materials that were used in assembly
+/// * `element_materials` - Map from element index to material index in `materials`
+///                         Elements not in the map use material index 0
+/// * `displacements` - Global displacement vector from solver
+///
+/// # Returns
+///
+/// `StressField` containing stresses for all elements.
+pub fn recover_stresses_with_materials(
+    mesh: &Mesh,
+    materials: &[Material],
+    element_materials: &std::collections::HashMap<usize, usize>,
+    displacements: &[f64],
+) -> StressField {
+    // Get DOFs per node from mesh (2 for 2D elements, 3 for 3D elements)
+    let dofs_per_node = mesh.dofs_per_node().unwrap_or(3);
+
+    // Parallel stress recovery over elements
+    let element_stresses: Vec<ElementStress> = mesh
+        .elements()
+        .par_iter()
+        .enumerate()
+        .map(|(elem_idx, connectivity)| {
+            // Create element implementation
+            let element = create_element(connectivity.element_type);
+
+            // Get DOFs per node for this specific element type
+            let elem_dofs_per_node = connectivity.element_type.dofs_per_node();
+
+            // Get element nodal coordinates
+            let coords = mesh.element_coords(elem_idx).expect("Valid element index");
+
+            // Extract element nodal displacements
+            let n_nodes = connectivity.nodes.len();
+            let n_dofs = n_nodes * elem_dofs_per_node;
+            let mut elem_displacements = vec![0.0; n_dofs];
+
+            for (local_node, &global_node) in connectivity.nodes.iter().enumerate() {
+                for dof in 0..elem_dofs_per_node {
+                    let global_dof = global_node * dofs_per_node + dof;
+                    let local_dof = local_node * elem_dofs_per_node + dof;
+                    elem_displacements[local_dof] =
+                        displacements.get(global_dof).copied().unwrap_or(0.0);
+                }
+            }
+
+            // Look up material for this element (default to first material)
+            let material_idx = element_materials.get(&elem_idx).copied().unwrap_or(0);
+            let material = &materials[material_idx.min(materials.len() - 1)];
+
+            // Compute stress at integration points using element-specific material
             let stresses = element.stress(&coords, &elem_displacements, material);
 
             ElementStress {

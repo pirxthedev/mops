@@ -86,6 +86,10 @@ impl Default for AssemblyOptions {
 ///
 /// let system = assemble(&mesh, &material, &bcs, &AssemblyOptions::default()).unwrap();
 /// ```
+///
+/// # Note
+///
+/// For multi-material analysis, use `assemble_with_materials` instead.
 pub fn assemble(
     mesh: &Mesh,
     material: &Material,
@@ -127,6 +131,130 @@ pub fn assemble(
 
             // Build DOF index mapping: element nodes -> global DOFs
             // Use the element's dofs_per_node to ensure correct mapping
+            let elem_dofs_per_node = element.dofs_per_node();
+            let dof_indices: Vec<usize> = connectivity
+                .nodes
+                .iter()
+                .flat_map(|&node| (0..elem_dofs_per_node).map(move |d| node * dofs_per_node + d))
+                .collect();
+
+            // Add to global triplet matrix (thread-safe via mutex)
+            triplet.lock().unwrap().add_submatrix(&dof_indices, &ke);
+        });
+
+    // Extract assembled triplet matrix
+    let triplet = triplet.into_inner().unwrap();
+
+    // Initialize RHS and constraints
+    let mut rhs = SparseVector::zeros(n_dofs);
+    let mut constraints = HashMap::new();
+
+    // Apply boundary conditions
+    for bc in boundary_conditions {
+        match bc {
+            BoundaryCondition::Displacement { node, dof, value } => {
+                let global_dof = node * dofs_per_node + dof;
+                constraints.insert(global_dof, *value);
+            }
+            BoundaryCondition::Force { node, dof, value } => {
+                let global_dof = node * dofs_per_node + dof;
+                rhs.add(global_dof, *value);
+            }
+        }
+    }
+
+    // Convert to CSR
+    let stiffness = triplet.to_csr();
+
+    Ok(AssembledSystem {
+        stiffness,
+        rhs: rhs.into_vec(),
+        n_dofs,
+        constraints,
+    })
+}
+
+/// Assemble global stiffness matrix with per-element material assignments.
+///
+/// This version allows different materials for different elements, enabling
+/// multi-material analysis (e.g., composite structures, bonded assemblies).
+///
+/// # Arguments
+///
+/// * `mesh` - Finite element mesh
+/// * `materials` - List of materials that can be assigned to elements
+/// * `element_materials` - Map from element index to material index in `materials`
+///                         Elements not in the map use material index 0 (first material)
+/// * `boundary_conditions` - Applied BCs (displacements and forces)
+/// * `options` - Assembly configuration
+///
+/// # Example
+///
+/// ```ignore
+/// use mops_core::assembly::{assemble_with_materials, AssemblyOptions, BoundaryCondition};
+/// use mops_core::material::Material;
+/// use std::collections::HashMap;
+///
+/// let steel = Material::steel();
+/// let aluminum = Material::aluminum();
+/// let materials = vec![steel, aluminum];
+///
+/// // Assign aluminum (index 1) to elements 0-9, steel (index 0) to rest
+/// let mut element_materials = HashMap::new();
+/// for i in 0..10 {
+///     element_materials.insert(i, 1);
+/// }
+///
+/// let system = assemble_with_materials(&mesh, &materials, &element_materials, &bcs, &options)?;
+/// ```
+pub fn assemble_with_materials(
+    mesh: &Mesh,
+    materials: &[Material],
+    element_materials: &HashMap<usize, usize>,
+    boundary_conditions: &[BoundaryCondition],
+    options: &AssemblyOptions,
+) -> Result<AssembledSystem> {
+    if materials.is_empty() {
+        return Err(crate::error::Error::InvalidMaterial(
+            "At least one material must be provided".into(),
+        ));
+    }
+
+    // Determine DOFs per node from mesh element types
+    let dofs_per_node = mesh.dofs_per_node()?;
+    let n_dofs = mesh.n_nodes() * dofs_per_node;
+
+    // Estimate non-zeros based on element dimension
+    let nnz_per_dof = if dofs_per_node == 3 { 27 } else { 9 };
+    let nnz_estimate = n_dofs * nnz_per_dof;
+    let triplet = Mutex::new(TripletMatrix::with_capacity(n_dofs, n_dofs, nnz_estimate));
+
+    // Get thickness for 2D elements from options
+    let thickness = options.thickness;
+
+    // Parallel element stiffness computation and assembly
+    mesh.elements()
+        .par_iter()
+        .enumerate()
+        .for_each(|(elem_idx, connectivity)| {
+            // Create element implementation from type
+            let element = if connectivity.element_type.dimension() == 2 {
+                create_element_with_thickness(connectivity.element_type, thickness)
+            } else {
+                create_element(connectivity.element_type)
+            };
+
+            // Get element nodal coordinates
+            let coords = mesh.element_coords(elem_idx).expect("Valid element index");
+
+            // Look up material for this element (default to first material)
+            let material_idx = element_materials.get(&elem_idx).copied().unwrap_or(0);
+            let material = &materials[material_idx.min(materials.len() - 1)];
+
+            // Compute element stiffness matrix with element-specific material
+            let ke = element.stiffness(&coords, material);
+
+            // Build DOF index mapping: element nodes -> global DOFs
             let elem_dofs_per_node = element.dofs_per_node();
             let dof_indices: Vec<usize> = connectivity
                 .nodes

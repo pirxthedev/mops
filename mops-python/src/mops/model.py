@@ -19,11 +19,13 @@ class ModelState:
 
     mesh: "Mesh"
     materials: dict[str, "Material"] = field(default_factory=dict)
-    material_assignments: dict[str, str] = field(default_factory=dict)  # element group -> material
-    thickness_assignments: dict[str, float] = field(default_factory=dict)  # element group -> thickness
+    material_assignments: dict[str, str] = field(default_factory=dict)  # query_repr -> material name (legacy)
+    thickness_assignments: dict[str, float] = field(default_factory=dict)  # query_repr -> thickness
     constraints: list[tuple["NodeQuery", list[str], float]] = field(default_factory=list)
     loads: list[tuple["NodeQuery | FaceQuery", "Load"]] = field(default_factory=list)
     components: dict[str, "Query"] = field(default_factory=dict)
+    # Store actual query objects for per-element material assignment
+    material_queries: dict[str, "ElementQuery"] = field(default_factory=dict)  # query_repr -> ElementQuery
 
 
 class Model:
@@ -104,6 +106,7 @@ class Model:
                 constraints=self._state.constraints,
                 loads=self._state.loads,
                 components=self._state.components,
+                material_queries=self._state.material_queries,
             ),
         )
 
@@ -132,9 +135,12 @@ class Model:
         if thickness is not None and thickness <= 0:
             raise ValueError(f"thickness must be positive, got {thickness}")
 
-        # For now, use query repr as key (will be refined with proper query evaluation)
+        # Use query repr as key for backward compatibility
         query_key = repr(query)
         new_assignments = {**self._state.material_assignments, query_key: material}
+
+        # Store the actual query object for evaluation during solve
+        new_queries = {**self._state.material_queries, query_key: query}
 
         # Update thickness assignments if specified
         new_thickness = {**self._state.thickness_assignments}
@@ -151,6 +157,7 @@ class Model:
                 constraints=self._state.constraints,
                 loads=self._state.loads,
                 components=self._state.components,
+                material_queries=new_queries,
             ),
         )
 
@@ -187,6 +194,7 @@ class Model:
                 constraints=new_constraints,
                 loads=self._state.loads,
                 components=self._state.components,
+                material_queries=self._state.material_queries,
             ),
         )
 
@@ -212,6 +220,7 @@ class Model:
                 constraints=self._state.constraints,
                 loads=new_loads,
                 components=self._state.components,
+                material_queries=self._state.material_queries,
             ),
         )
 
@@ -237,6 +246,7 @@ class Model:
                 constraints=self._state.constraints,
                 loads=self._state.loads,
                 components=new_components,
+                material_queries=self._state.material_queries,
             ),
         )
 
@@ -244,10 +254,15 @@ class Model:
         """Internal solve method.
 
         This evaluates all queries and calls the Rust solver.
+
+        Supports both single-material and multi-material analysis:
+        - If all elements use the same material, uses the optimized single-material path
+        - If different materials are assigned to different element groups, uses
+          the multi-material solver with per-element material lookup
         """
-        from mops._core import solve_with_forces
+        from mops._core import solve_with_forces, solve_with_materials
         from mops.loads import Force, Pressure
-        from mops.query import FaceQuery, NodeQuery
+        from mops.query import ElementQuery, FaceQuery, NodeQuery
 
         # Validate model completeness
         if not self._state.materials:
@@ -257,8 +272,38 @@ class Model:
         if not self._state.loads:
             raise ValueError("No loads defined")
 
-        # Get the first (and currently only) material
-        material = next(iter(self._state.materials.values()))
+        # Determine if we need multi-material solve
+        # Build element-to-material mapping by evaluating material_assignments queries
+        components = self._state.components
+        material_names = list(self._state.materials.keys())
+        material_name_to_idx = {name: i for i, name in enumerate(material_names)}
+
+        # Build element -> material index mapping by evaluating stored queries
+        element_material_map: dict[int, int] = {}
+        mesh = self._state.mesh
+        core_mesh = mesh._inner if hasattr(mesh, "_inner") else mesh
+
+        for query_repr, material_name in self._state.material_assignments.items():
+            mat_idx = material_name_to_idx[material_name]
+
+            # Get the actual query object from material_queries
+            if query_repr in self._state.material_queries:
+                query = self._state.material_queries[query_repr]
+                # Evaluate the query to get element indices
+                element_indices = query.evaluate(core_mesh, components)
+                for elem_idx in element_indices:
+                    element_material_map[int(elem_idx)] = mat_idx
+            else:
+                # Fallback: assign to all elements (for backward compatibility)
+                for elem_idx in range(core_mesh.n_elements):
+                    element_material_map[elem_idx] = mat_idx
+
+        # Check if all elements use the same material
+        unique_materials = set(element_material_map.values()) if element_material_map else {0}
+        use_multi_material = len(unique_materials) > 1
+
+        # Get the first material as default (for single-material fallback)
+        default_material = next(iter(self._state.materials.values()))
 
         # Get components dict for resolving component queries
         components = self._state.components
@@ -366,14 +411,41 @@ class Model:
         mesh = self._state.mesh
         core_mesh = mesh._inner if hasattr(mesh, "_inner") else mesh
 
-        return solve_with_forces(
-            core_mesh,
-            material,
-            constraints,
-            forces,
-            config,
-            thickness,
-        )
+        # Choose solver based on material configuration
+        if use_multi_material and len(self._state.materials) > 1:
+            # Multi-material solve: pass all materials and element-material mapping
+            materials_list = list(self._state.materials.values())
+
+            # Build element_material_indices as Nx2 array
+            elem_mat_rows = [
+                [elem_idx, mat_idx]
+                for elem_idx, mat_idx in element_material_map.items()
+            ]
+            if elem_mat_rows:
+                element_material_indices = np.array(elem_mat_rows, dtype=np.int64)
+            else:
+                # No explicit assignments - use empty array (all elements get material 0)
+                element_material_indices = np.zeros((0, 2), dtype=np.int64)
+
+            return solve_with_materials(
+                core_mesh,
+                materials_list,
+                element_material_indices,
+                constraints,
+                forces,
+                config,
+                thickness,
+            )
+        else:
+            # Single-material solve (optimized path)
+            return solve_with_forces(
+                core_mesh,
+                default_material,
+                constraints,
+                forces,
+                config,
+                thickness,
+            )
 
     def __repr__(self) -> str:
         return (
