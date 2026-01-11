@@ -9,6 +9,7 @@ use pyo3::prelude::*;
 use std::collections::HashMap;
 
 use mops_core::assembly::{assemble, AssemblyOptions, BoundaryCondition};
+use mops_core::element::create_element;
 use mops_core::material::Material as CoreMaterial;
 use mops_core::mesh::{ElementType, Mesh};
 use mops_core::solver::{FaerCholeskySolver, Solver, SolverConfig, SolverType};
@@ -430,6 +431,112 @@ fn solve_simple(
     })
 }
 
+/// Compute element stiffness matrix for a single element.
+///
+/// This function is primarily for testing and verification purposes.
+/// It computes the element stiffness matrix K for a single element
+/// given its nodal coordinates and material properties.
+///
+/// Args:
+///     element_type: Element type string ("tet4", "tet10", "hex8")
+///     nodes: Nx3 array of node coordinates for this element
+///     material: Material properties
+///
+/// Returns:
+///     2D numpy array of shape (n_dofs, n_dofs) containing the element stiffness matrix
+#[pyfunction]
+fn element_stiffness<'py>(
+    py: Python<'py>,
+    element_type: &str,
+    nodes: PyReadonlyArray2<f64>,
+    material: &PyMaterial,
+) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    let elem_type = match element_type {
+        "tet4" => ElementType::Tet4,
+        "tet10" => ElementType::Tet10,
+        "hex8" => ElementType::Hex8,
+        _ => {
+            return Err(PyValueError::new_err(format!(
+                "Unknown element type: {}. Valid types: tet4, tet10, hex8",
+                element_type
+            )))
+        }
+    };
+
+    let nodes_shape = nodes.shape();
+    let expected_nodes = elem_type.n_nodes();
+
+    if nodes_shape.len() != 2 || nodes_shape[0] != expected_nodes || nodes_shape[1] != 3 {
+        return Err(PyValueError::new_err(format!(
+            "nodes must be {}x3 array for {} element",
+            expected_nodes, element_type
+        )));
+    }
+
+    // Convert nodes to Point3 array
+    let nodes_array = nodes.as_array();
+    let coords: Vec<Point3> = (0..expected_nodes)
+        .map(|i| Point3::new(nodes_array[[i, 0]], nodes_array[[i, 1]], nodes_array[[i, 2]]))
+        .collect();
+
+    // Create element and compute stiffness
+    let element = create_element(elem_type);
+    let core_material = material.to_core();
+    let k = element.stiffness(&coords, &core_material);
+
+    // Convert to 2D nested vec for PyArray2
+    let n_dofs = element.n_dofs();
+    let data: Vec<Vec<f64>> = (0..n_dofs)
+        .map(|i| (0..n_dofs).map(|j| k[(i, j)]).collect())
+        .collect();
+
+    PyArray2::from_vec2(py, &data)
+        .map_err(|e| PyRuntimeError::new_err(format!("Failed to create array: {}", e)))
+}
+
+/// Compute element volume for a single element.
+///
+/// Args:
+///     element_type: Element type string ("tet4", "tet10", "hex8")
+///     nodes: Nx3 array of node coordinates for this element
+///
+/// Returns:
+///     Element volume as a float
+#[pyfunction]
+fn element_volume(element_type: &str, nodes: PyReadonlyArray2<f64>) -> PyResult<f64> {
+    let elem_type = match element_type {
+        "tet4" => ElementType::Tet4,
+        "tet10" => ElementType::Tet10,
+        "hex8" => ElementType::Hex8,
+        _ => {
+            return Err(PyValueError::new_err(format!(
+                "Unknown element type: {}. Valid types: tet4, tet10, hex8",
+                element_type
+            )))
+        }
+    };
+
+    let nodes_shape = nodes.shape();
+    let expected_nodes = elem_type.n_nodes();
+
+    if nodes_shape.len() != 2 || nodes_shape[0] != expected_nodes || nodes_shape[1] != 3 {
+        return Err(PyValueError::new_err(format!(
+            "nodes must be {}x3 array for {} element",
+            expected_nodes, element_type
+        )));
+    }
+
+    // Convert nodes to Point3 array
+    let nodes_array = nodes.as_array();
+    let coords: Vec<Point3> = (0..expected_nodes)
+        .map(|i| Point3::new(nodes_array[[i, 0]], nodes_array[[i, 1]], nodes_array[[i, 2]]))
+        .collect();
+
+    // Create element and compute volume
+    let element = create_element(elem_type);
+    Ok(element.volume(&coords))
+}
+
 /// Check solver library availability.
 #[pyfunction]
 fn solver_info() -> HashMap<String, bool> {
@@ -456,6 +563,8 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PySolverConfig>()?;
     m.add_class::<PyResults>()?;
     m.add_function(wrap_pyfunction!(solve_simple, m)?)?;
+    m.add_function(wrap_pyfunction!(element_stiffness, m)?)?;
+    m.add_function(wrap_pyfunction!(element_volume, m)?)?;
     m.add_function(wrap_pyfunction!(solver_info, m)?)?;
     m.add_function(wrap_pyfunction!(version, m)?)?;
     Ok(())
