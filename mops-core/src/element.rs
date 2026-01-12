@@ -204,6 +204,9 @@ pub fn create_element_with_thickness(
         ElementType::Tri6 => Box::new(Tri6::new(thickness)),
         ElementType::Quad4 => Box::new(Quad4::new(thickness)),
         ElementType::Quad8 => Box::new(Quad8::new(thickness)),
+        // Axisymmetric elements don't use thickness - use 2πr integration instead
+        ElementType::Tri3Axisymmetric => Box::new(Tri3Axisymmetric::new()),
+        ElementType::Quad4Axisymmetric => Box::new(Quad4Axisymmetric::new()),
         _ => panic!(
             "Element type {:?} does not support thickness parameter. \
              Use create_element() for 3D elements.",
