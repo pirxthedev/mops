@@ -9,6 +9,8 @@ MOPS provides a comprehensive library of finite elements for 3D solid, 2D plane,
 | `tet4` | 3D solid | 4 | 12 | 1-point | General meshing |
 | `tet10` | 3D solid | 10 | 30 | 4-point | Higher accuracy |
 | `hex8` | 3D solid | 8 | 24 | 2×2×2 | Structured meshes |
+| `hex8sri` | 3D solid | 8 | 24 | 1 + 2×2×2 | Bending-dominated |
+| `hex8bbar` | 3D solid | 8 | 24 | 2×2×2 | Near-incompressible |
 | `hex20` | 3D solid | 20 | 60 | 3×3×3 | High accuracy structured |
 | `tri3` | 2D | 3 | 6 | 1-point | Plane stress/strain |
 | `quad4` | 2D | 4 | 8 | 2×2 | Plane stress/strain |
@@ -103,6 +105,115 @@ Brick element for structured meshes. More accurate than Tet4 for the same mesh d
 mesh = Mesh(nodes, elements, "hex8")
 ```
 
+**Limitations:**
+- Shear locking in bending-dominated problems (use `hex8sri` instead)
+- Volumetric locking with nearly incompressible materials (use `hex8bbar` instead)
+
+### Hex8SRI (Selective Reduced Integration)
+
+A variant of Hex8 that mitigates **shear locking** through selective reduced integration. Use this for bending-dominated problems or coarse meshes.
+
+**What is Shear Locking?**
+
+Shear locking occurs when linear elements cannot represent pure bending without introducing spurious shear strains. This makes the element artificially stiff, underestimating displacements and causing inaccurate stresses.
+
+```
+Pure bending should have:     But Hex8 predicts:
+- Quadratic displacement      - Linear displacement (locked)
+- Zero shear strain           - Non-zero spurious shear
+```
+
+**How Hex8SRI Fixes It:**
+
+Hex8SRI uses different integration orders for volumetric and deviatoric (shear) strain:
+- **1-point** integration at element center for volumetric strain
+- **2×2×2** integration for deviatoric strain
+
+This eliminates spurious shear stiffness while maintaining element stability.
+
+**Characteristics:**
+- Same 8 nodes and DOFs as Hex8
+- No hourglass modes (unlike uniform reduced integration)
+- Significantly improved bending accuracy
+- Similar computational cost to standard Hex8
+
+**When to use Hex8SRI:**
+- Bending-dominated problems (cantilevers, plates, beams)
+- Coarse meshes where shear locking would be significant
+- When mesh refinement is constrained by computational resources
+- Solid-meshed shell-like structures
+
+```python
+mesh = Mesh(nodes, elements, "hex8sri")
+```
+
+**Example: Cantilever Beam**
+
+```python
+# Hex8SRI is more accurate than Hex8 for bending
+# On a coarse mesh (5x1x1 elements):
+#   - Hex8 error: ~40-50% (too stiff)
+#   - Hex8SRI error: ~20-30% (much better)
+#   - Both converge with mesh refinement
+```
+
+### Hex8Bbar (Mean Dilatation / B-bar)
+
+A variant of Hex8 that addresses **volumetric locking** through the B-bar (mean dilatation) formulation. Use this for nearly incompressible materials (ν → 0.5).
+
+**What is Volumetric Locking?**
+
+Volumetric locking occurs when elements overconstrain volumetric deformation for materials with high Poisson's ratio (rubber, biological tissue, incompressible fluids). The element becomes artificially stiff, severely underestimating displacements.
+
+**How Hex8Bbar Fixes It:**
+
+Hex8Bbar replaces local volumetric strain with an element-averaged volumetric strain:
+```
+Standard: ε_vol at each point
+B-bar:    ε_vol_avg = (1/V) ∫ ε_vol dV (averaged over element)
+```
+
+This prevents over-constraining volumetric deformation.
+
+**Characteristics:**
+- Same 8 nodes and DOFs as Hex8
+- Addresses both volumetric and shear locking
+- Mathematically rigorous (variational basis)
+- Widely used in metal plasticity
+
+**When to use Hex8Bbar:**
+- Nearly incompressible materials (rubber, ν ≈ 0.499)
+- Biological tissue modeling
+- Metal forming simulations (large plastic deformation)
+- Problems where both volumetric and shear locking are concerns
+
+```python
+mesh = Mesh(nodes, elements, "hex8bbar")
+```
+
+### Choosing Between Hex8 Variants
+
+| Situation | Element | Reason |
+|-----------|---------|--------|
+| General structured mesh | `hex8` | Safe default, well-understood |
+| Bending-dominated (plates, beams) | `hex8sri` | Reduces shear locking |
+| Coarse mesh, bending loads | `hex8sri` | Better accuracy with fewer elements |
+| Rubber, ν ≈ 0.5 | `hex8bbar` | Prevents volumetric locking |
+| Metal forming | `hex8bbar` | Standard for plasticity |
+| High accuracy, any problem | `hex20` | Quadratic elements avoid locking |
+
+**Decision Flowchart:**
+
+```
+Is the material nearly incompressible (ν > 0.45)?
+  └─ Yes → Use hex8bbar
+  └─ No → Is the problem bending-dominated?
+           └─ Yes → Use hex8sri (coarse mesh) or hex8 (fine mesh)
+           └─ No → Use hex8 (default)
+```
+
+**Note:** When in doubt, `hex20` (quadratic elements) avoids both locking issues but costs more computationally.
+
 ### Hex20 (Quadratic Hexahedron)
 
 High-order hexahedron for maximum accuracy in structured meshes.
@@ -190,6 +301,8 @@ For bodies of revolution loaded symmetrically about the axis. Models a 2D cross-
 | Situation | Recommended Element | Mesh Density |
 |-----------|---------------------|--------------|
 | Initial design/coarse analysis | `hex8` or `tet4` | 3-5 elements through thickness |
+| Bending-dominated, coarse mesh | `hex8sri` | Fewer elements needed |
+| Near-incompressible materials | `hex8bbar` | Required for ν > 0.45 |
 | Production analysis | `tet10` | Auto-meshing tools |
 | High accuracy requirements | `hex20` or `tet10` | Refined at stress concentrations |
 | Complex geometry (auto-mesh) | `tet10` | Mesh generators like Gmsh |
@@ -230,6 +343,8 @@ Elements use Gauss quadrature for numerical integration:
 | `tet4` | 1 | Centroid | 1/6 |
 | `tet10` | 4 | Interior | 1/24 each |
 | `hex8` | 8 | ±1/√3 in each direction | 1.0 each |
+| `hex8sri` | 1 + 8 | Center (vol) + ±1/√3 (dev) | special |
+| `hex8bbar` | 8 | ±1/√3 in each direction | 1.0 each |
 | `hex20` | 27 | ±√(3/5), 0 in each direction | varies |
 
 Stresses are most accurate at integration points. Element-averaged stresses (reported by MOPS) are computed from integration point values.

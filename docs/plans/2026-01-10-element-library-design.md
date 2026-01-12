@@ -17,6 +17,8 @@ This document specifies the finite element formulations for MOPS. All elements i
 | Tet4 | 3D solid | 4 | 12 | 1-point | General 3D, auto-meshing |
 | Tet10 | 3D solid | 10 | 30 | 4-point | Higher accuracy 3D |
 | Hex8 | 3D solid | 8 | 24 | 2×2×2 | Structured meshes |
+| Hex8SRI | 3D solid | 8 | 24 | 1 + 2×2×2 | Bending, coarse meshes |
+| Hex8Bbar | 3D solid | 8 | 24 | 2×2×2 + avg | Nearly incompressible |
 | Hex20 | 3D solid | 20 | 60 | 3×3×3 | Higher accuracy structured |
 | PlaneStress | 2D | 3 or 4 | 6 or 8 | varies | Thin plates (σ_z = 0) |
 | PlaneStrain | 2D | 3 or 4 | 6 or 8 | varies | Long prismatic (ε_z = 0) |
@@ -143,6 +145,64 @@ J = [∂x/∂ξ  ∂y/∂ξ  ∂z/∂ξ]
     [∂x/∂ζ  ∂y/∂ζ  ∂z/∂ζ]
 ```
 
+**Known limitations:**
+- Shear locking in bending-dominated problems (see Hex8SRI)
+- Volumetric locking for nearly incompressible materials (see Hex8Bbar)
+
+### Hex8SRI (Selective Reduced Integration)
+
+A variant of Hex8 that mitigates shear locking through selective reduced integration.
+
+**Concept:** Use different integration orders for volumetric and deviatoric strain components:
+- Volumetric strain (tr(ε)/3): 1-point integration at element center
+- Deviatoric strain (shear): Full 2×2×2 integration
+
+**Mathematical Formulation:**
+```
+B_vol = I_vol * B        where I_vol = (1/3) * m * m^T, m = [1,1,1,0,0,0]^T
+B_dev = (I - I_vol) * B
+
+K = ∫ B_vol^T D B_vol |J| dV (1-point) + ∫ B_dev^T D B_dev |J| dV (8-point)
+```
+
+**Properties:**
+- No hourglass modes (unlike uniform reduced integration)
+- Preserves element stability
+- Improved accuracy in bending-dominated problems
+- Similar computational cost to standard Hex8
+
+**When to use:**
+- Bending-dominated problems (beams, plates, shells meshed with solids)
+- Coarse meshes where shear locking would be significant
+- When mesh refinement is constrained by computational resources
+
+### Hex8Bbar (Mean Dilatation / B-bar)
+
+A variant of Hex8 that addresses both volumetric and shear locking through the B-bar formulation.
+
+**Concept:** Replace local volumetric strain with element-averaged volumetric strain:
+```
+ε_vol_avg = (1/V) ∫ tr(ε)/3 dV
+```
+
+**Mathematical Formulation:**
+```
+B̄ = B_dev + B̄_vol
+
+B̄_vol = (1/V) ∫ B_vol dV  (element-averaged volumetric B-matrix)
+```
+
+**Properties:**
+- Addresses volumetric locking for nearly incompressible materials (ν → 0.5)
+- Also reduces shear locking
+- Mathematically rigorous (variational basis)
+- Standard in metal plasticity applications
+
+**When to use:**
+- Nearly incompressible materials (rubber, ν ≈ 0.499)
+- Problems where both volumetric and shear locking are concerns
+- Metal forming simulations with large plastic deformation
+
 ### Hex20 (20-Node Hexahedron)
 
 **Shape functions (serendipity quadratic):**
@@ -225,6 +285,8 @@ mops-core/src/
 │   ├── tet4.rs             # Tet4 implementation
 │   ├── tet10.rs            # Tet10 implementation
 │   ├── hex8.rs             # Hex8 implementation
+│   ├── hex8_sri.rs         # Hex8SRI (selective reduced integration)
+│   ├── hex8_bbar.rs        # Hex8Bbar (mean dilatation)
 │   ├── hex20.rs            # Hex20 implementation
 │   ├── plane_stress.rs     # Tri3/Quad4 plane stress
 │   ├── plane_strain.rs     # Tri3/Quad4 plane strain
@@ -240,6 +302,8 @@ pub fn create_element(element_type: ElementType) -> Box<dyn Element> {
         ElementType::Tet4 => Box::new(Tet4),
         ElementType::Tet10 => Box::new(Tet10),
         ElementType::Hex8 => Box::new(Hex8),
+        ElementType::Hex8SRI => Box::new(Hex8SRI),
+        ElementType::Hex8Bbar => Box::new(Hex8Bbar),
         ElementType::Hex20 => Box::new(Hex20),
         // 2D elements need additional context (thickness, etc.)
         _ => unimplemented!(),
@@ -274,7 +338,8 @@ Every element must pass patch tests verifying:
 
 | Benchmark | Elements | Reference |
 |-----------|----------|-----------|
-| Cantilever beam | Hex8, Tet4 | Beam theory (δ = PL³/3EI) |
+| Cantilever beam | Hex8, Hex8SRI, Tet4 | Beam theory (δ = PL³/3EI) |
+| Cook's membrane | Hex8, Hex8SRI | δ_y = 23.96 at corner (shear locking test) |
 | Plate with hole | Tet10, Hex8 | Kirsch solution |
 | Pressurized cylinder | Axisym | Lamé equations |
 | Simply supported plate | Quad4 | Plate theory |
@@ -328,9 +393,10 @@ Longer-running NAFEMS verification suite in `tests/verification/`.
 
 ## Open Questions
 
-1. **Reduced integration:** Add selectively reduced integration for locking relief?
-2. **B-bar formulation:** Implement for volumetric locking in Tet4?
+1. ~~**Reduced integration:** Add selectively reduced integration for locking relief?~~ **RESOLVED:** Implemented as Hex8SRI
+2. ~~**B-bar formulation:** Implement for volumetric locking in Tet4?~~ **RESOLVED:** Implemented as Hex8Bbar for hex elements
 3. **Element quality metrics:** Jacobian ratio, aspect ratio warnings?
+4. **Tet4 locking remediation:** Should B-bar or pressure stabilization be implemented for Tet4?
 
 ## References
 
