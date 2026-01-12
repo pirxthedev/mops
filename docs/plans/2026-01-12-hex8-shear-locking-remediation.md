@@ -1,7 +1,7 @@
 # Hex8 Shear Locking Remediation
 
 **Date:** 2026-01-12
-**Status:** Research Complete
+**Status:** Phase 1 & 2 Complete (Hex8SRI, Hex8Bbar implemented)
 **Depends on:** [Element Library Design](2026-01-10-element-library-design.md)
 **Related Issue:** mops-cb0
 
@@ -233,6 +233,7 @@ For reduced integration variants:
 - [x] 2×2×2 deviatoric integration
 - [x] Unit tests (patch tests, symmetry)
 - [x] Add to Python bindings
+- [x] Cook's membrane verification test (tests/verification/test_cooks_membrane.py)
 - [ ] Cantilever beam verification test
 - [ ] NAFEMS LE10 comparison test
 
