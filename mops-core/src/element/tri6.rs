@@ -151,7 +151,7 @@ impl Tri6 {
         let mut dn_dxi = [0.0; 6];
         let mut dn_deta = [0.0; 6];
         for i in 0..6 {
-            dn_dxi[i] = dn_dl[i].1 - dn_dl[i].0;  // dN/dL2 - dN/dL1
+            dn_dxi[i] = dn_dl[i].1 - dn_dl[i].0; // dN/dL2 - dN/dL1
             dn_deta[i] = dn_dl[i].2 - dn_dl[i].0; // dN/dL3 - dN/dL1
         }
 
@@ -160,8 +160,8 @@ impl Tri6 {
         // where dx/dξ = sum_i (dN_i/dξ) * x_i
         let mut j = Matrix2::zeros();
         for i in 0..6 {
-            j[(0, 0)] += dn_dxi[i] * coords[i][0];  // dx/dξ
-            j[(0, 1)] += dn_dxi[i] * coords[i][1];  // dy/dξ
+            j[(0, 0)] += dn_dxi[i] * coords[i][0]; // dx/dξ
+            j[(0, 1)] += dn_dxi[i] * coords[i][1]; // dy/dξ
             j[(1, 0)] += dn_deta[i] * coords[i][0]; // dx/dη
             j[(1, 1)] += dn_deta[i] * coords[i][1]; // dy/dη
         }
@@ -217,11 +217,7 @@ impl Element for Tri6 {
     }
 
     fn stiffness(&self, coords: &[Point3], material: &Material) -> DMatrix<f64> {
-        assert_eq!(
-            coords.len(),
-            6,
-            "Tri6 requires exactly 6 nodal coordinates"
-        );
+        assert_eq!(coords.len(), 6, "Tri6 requires exactly 6 nodal coordinates");
 
         let d = material.constitutive_plane_stress();
         let mut k = DMatrix::zeros(12, 12);
@@ -256,11 +252,7 @@ impl Element for Tri6 {
         displacements: &[f64],
         material: &Material,
     ) -> Vec<StressTensor> {
-        assert_eq!(
-            coords.len(),
-            6,
-            "Tri6 requires exactly 6 nodal coordinates"
-        );
+        assert_eq!(coords.len(), 6, "Tri6 requires exactly 6 nodal coordinates");
         assert_eq!(
             displacements.len(),
             12,
@@ -304,11 +296,7 @@ impl Element for Tri6 {
     }
 
     fn volume(&self, coords: &[Point3]) -> f64 {
-        assert_eq!(
-            coords.len(),
-            6,
-            "Tri6 requires exactly 6 nodal coordinates"
-        );
+        assert_eq!(coords.len(), 6, "Tri6 requires exactly 6 nodal coordinates");
 
         // Integrate using 3-point Gauss quadrature
         // gauss_tri weights are scaled for unit triangle (sum to 0.5)
@@ -458,14 +446,16 @@ mod tests {
         let k = tri.stiffness(&coords, &mat);
 
         // Pure x-translation: u = [1,0, 1,0, 1,0, 1,0, 1,0, 1,0]
-        let u_x =
-            nalgebra::DVector::from_vec(vec![1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0]);
+        let u_x = nalgebra::DVector::from_vec(vec![
+            1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0,
+        ]);
         let f_x = &k * &u_x;
         assert_relative_eq!(f_x.norm(), 0.0, epsilon = 1e-10);
 
         // Pure y-translation
-        let u_y =
-            nalgebra::DVector::from_vec(vec![0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]);
+        let u_y = nalgebra::DVector::from_vec(vec![
+            0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0,
+        ]);
         let f_y = &k * &u_y;
         assert_relative_eq!(f_y.norm(), 0.0, epsilon = 1e-10);
     }
@@ -484,12 +474,12 @@ mod tests {
         // Node 5 (0.5,0.5): u=0.0005
         // Node 6 (0,0.5): u=0
         let displacements = [
-            0.0, 0.0,     // Node 1
-            0.001, 0.0,   // Node 2
-            0.0, 0.0,     // Node 3
-            0.0005, 0.0,  // Node 4
-            0.0005, 0.0,  // Node 5
-            0.0, 0.0,     // Node 6
+            0.0, 0.0, // Node 1
+            0.001, 0.0, // Node 2
+            0.0, 0.0, // Node 3
+            0.0005, 0.0, // Node 4
+            0.0005, 0.0, // Node 5
+            0.0, 0.0, // Node 6
         ];
 
         let stresses = tri.stress(&coords, &displacements, &mat);

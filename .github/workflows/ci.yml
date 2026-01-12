@@ -106,7 +106,7 @@ jobs:
       - name: Install package and test dependencies
         working-directory: mops-python
         run: |
-          pip install target/wheels/*.whl
+          pip install ../target/wheels/*.whl
           pip install pytest pytest-cov numpy
 
       - name: Run unit tests
@@ -154,7 +154,7 @@ jobs:
       - name: Install package and test dependencies
         working-directory: mops-python
         run: |
-          pip install target/wheels/*.whl
+          pip install ../target/wheels/*.whl
           pip install pytest numpy
 
       - name: Run verification tests

@@ -349,7 +349,8 @@ impl Default for FaerCholeskySolver {
 
 impl Solver for FaerCholeskySolver {
     fn solve(&self, matrix: &CsrMatrix, rhs: &[f64]) -> Result<Vec<f64>> {
-        self.solve_with_stats(matrix, rhs).map(|(solution, _)| solution)
+        self.solve_with_stats(matrix, rhs)
+            .map(|(solution, _)| solution)
     }
 
     fn solve_with_stats(&self, matrix: &CsrMatrix, rhs: &[f64]) -> Result<(Vec<f64>, SolveStats)> {
@@ -359,10 +360,7 @@ impl Solver for FaerCholeskySolver {
         let nnz = matrix.nnz();
 
         if n == 0 {
-            return Ok((
-                vec![],
-                SolveStats::direct(self.name(), 0, 0, 0.0, 0.0, 0.0),
-            ));
+            return Ok((vec![], SolveStats::direct(self.name(), 0, 0, 0.0, 0.0, 0.0)));
         }
 
         if n != matrix.ncols() {
@@ -636,10 +634,15 @@ mod iterative {
 
     impl Solver for IterativeSolver {
         fn solve(&self, matrix: &CsrMatrix, rhs: &[f64]) -> Result<Vec<f64>> {
-            self.solve_with_stats(matrix, rhs).map(|(solution, _)| solution)
+            self.solve_with_stats(matrix, rhs)
+                .map(|(solution, _)| solution)
         }
 
-        fn solve_with_stats(&self, matrix: &CsrMatrix, rhs: &[f64]) -> Result<(Vec<f64>, SolveStats)> {
+        fn solve_with_stats(
+            &self,
+            matrix: &CsrMatrix,
+            rhs: &[f64],
+        ) -> Result<(Vec<f64>, SolveStats)> {
             use std::time::Instant;
 
             let n = matrix.nrows();
@@ -1147,7 +1150,9 @@ mod iterative_tests {
         }
 
         let matrix = triplet.to_csr();
-        let rhs: Vec<f64> = (0..n).map(|i| if i == 0 || i == n - 1 { 1.0 } else { 0.0 }).collect();
+        let rhs: Vec<f64> = (0..n)
+            .map(|i| if i == 0 || i == n - 1 { 1.0 } else { 0.0 })
+            .collect();
 
         let solver = IterativeSolver::with_amg();
         let solution = solver.solve(&matrix, &rhs).unwrap();

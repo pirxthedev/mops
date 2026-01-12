@@ -332,7 +332,8 @@ mod tests {
         mesh.add_node(Vector3::new(1.0, 0.0, 0.0));
         mesh.add_node(Vector3::new(0.0, 1.0, 0.0));
         mesh.add_node(Vector3::new(0.0, 0.0, 1.0));
-        mesh.add_element(ElementType::Tet4, vec![0, 1, 2, 3]).unwrap();
+        mesh.add_element(ElementType::Tet4, vec![0, 1, 2, 3])
+            .unwrap();
 
         assert_eq!(mesh.dofs_per_node().unwrap(), 3);
         assert_eq!(mesh.n_dofs().unwrap(), 12);
@@ -371,7 +372,8 @@ mod tests {
         // Add a 2D element first
         mesh.add_element(ElementType::Tri3, vec![0, 1, 2]).unwrap();
         // Add a 3D element (uses same nodes)
-        mesh.add_element(ElementType::Tet4, vec![0, 1, 2, 3]).unwrap();
+        mesh.add_element(ElementType::Tet4, vec![0, 1, 2, 3])
+            .unwrap();
 
         // Should fail due to mixed dimensions
         assert!(mesh.dofs_per_node().is_err());

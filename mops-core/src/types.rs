@@ -132,10 +132,7 @@ impl StressTensor {
     /// σ_intensity = max(|σ₁ - σ₂|, |σ₂ - σ₃|, |σ₃ - σ₁|)
     pub fn intensity(&self) -> f64 {
         let (s1, s2, s3) = self.principal_stresses();
-        f64::max(
-            (s1 - s2).abs(),
-            f64::max((s2 - s3).abs(), (s3 - s1).abs()),
-        )
+        f64::max((s1 - s2).abs(), f64::max((s2 - s3).abs(), (s3 - s1).abs()))
     }
 }
 

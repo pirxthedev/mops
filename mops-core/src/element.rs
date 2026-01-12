@@ -186,7 +186,10 @@ pub fn create_element(element_type: ElementType) -> Box<dyn Element> {
 /// let quad8 = create_element_with_thickness(ElementType::Quad8, 1.0);
 /// assert_eq!(quad8.n_nodes(), 8);
 /// ```
-pub fn create_element_with_thickness(element_type: ElementType, thickness: f64) -> Box<dyn Element> {
+pub fn create_element_with_thickness(
+    element_type: ElementType,
+    thickness: f64,
+) -> Box<dyn Element> {
     match element_type {
         ElementType::Tri3 => Box::new(Tri3::new(thickness)),
         ElementType::Tri6 => Box::new(Tri6::new(thickness)),

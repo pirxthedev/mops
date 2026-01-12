@@ -426,7 +426,13 @@ mod tests {
                 assert!(
                     (k[(i, j)] - k[(j, i)]).abs() < tol,
                     "K[{},{}] = {} != K[{},{}] = {} (diff = {:e})",
-                    i, j, k[(i, j)], j, i, k[(j, i)], (k[(i, j)] - k[(j, i)]).abs()
+                    i,
+                    j,
+                    k[(i, j)],
+                    j,
+                    i,
+                    k[(j, i)],
+                    (k[(i, j)] - k[(j, i)]).abs()
                 );
             }
         }
@@ -491,14 +497,14 @@ mod tests {
         // Node 7 (0.5,1): u=0.0005
         // Node 8 (0,0.5): u=0
         let displacements = [
-            0.0, 0.0,     // Node 1
-            0.001, 0.0,   // Node 2
-            0.001, 0.0,   // Node 3
-            0.0, 0.0,     // Node 4
-            0.0005, 0.0,  // Node 5
-            0.001, 0.0,   // Node 6
-            0.0005, 0.0,  // Node 7
-            0.0, 0.0,     // Node 8
+            0.0, 0.0, // Node 1
+            0.001, 0.0, // Node 2
+            0.001, 0.0, // Node 3
+            0.0, 0.0, // Node 4
+            0.0005, 0.0, // Node 5
+            0.001, 0.0, // Node 6
+            0.0005, 0.0, // Node 7
+            0.0, 0.0, // Node 8
         ];
 
         let stresses = quad.stress(&coords, &displacements, &mat);
@@ -523,14 +529,14 @@ mod tests {
         let quad = Quad8::new(1.0);
         // Bulge the bottom mid-side node upward
         let coords = vec![
-            Point3::new(0.0, 0.0, 0.0),   // Node 1
-            Point3::new(1.0, 0.0, 0.0),   // Node 2
-            Point3::new(1.0, 1.0, 0.0),   // Node 3
-            Point3::new(0.0, 1.0, 0.0),   // Node 4
-            Point3::new(0.5, 0.1, 0.0),   // Node 5 - curved edge
-            Point3::new(1.0, 0.5, 0.0),   // Node 6
-            Point3::new(0.5, 1.0, 0.0),   // Node 7
-            Point3::new(0.0, 0.5, 0.0),   // Node 8
+            Point3::new(0.0, 0.0, 0.0), // Node 1
+            Point3::new(1.0, 0.0, 0.0), // Node 2
+            Point3::new(1.0, 1.0, 0.0), // Node 3
+            Point3::new(0.0, 1.0, 0.0), // Node 4
+            Point3::new(0.5, 0.1, 0.0), // Node 5 - curved edge
+            Point3::new(1.0, 0.5, 0.0), // Node 6
+            Point3::new(0.5, 1.0, 0.0), // Node 7
+            Point3::new(0.0, 0.5, 0.0), // Node 8
         ];
         let mat = Material::steel();
 
@@ -545,7 +551,13 @@ mod tests {
                 assert!(
                     (k[(i, j)] - k[(j, i)]).abs() < tol,
                     "K[{},{}] = {} != K[{},{}] = {} (diff = {:e})",
-                    i, j, k[(i, j)], j, i, k[(j, i)], (k[(i, j)] - k[(j, i)]).abs()
+                    i,
+                    j,
+                    k[(i, j)],
+                    j,
+                    i,
+                    k[(j, i)],
+                    (k[(i, j)] - k[(j, i)]).abs()
                 );
             }
         }

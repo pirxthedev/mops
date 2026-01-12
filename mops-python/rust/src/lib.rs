@@ -128,7 +128,7 @@ impl PyMesh {
             "quad8" => ElementType::Quad8,
             _ => {
                 return Err(PyValueError::new_err(format!(
-                    "Unknown element type: {}. Valid types: tet4, tet10, hex8",
+                    "Unknown element type: {}. Valid types: tet4, tet10, hex8, hex20, tri3, tri6, quad4, quad8",
                     element_type
                 )))
             }
@@ -400,18 +400,81 @@ impl PySolveStats {
     fn to_dict(&self) -> HashMap<String, PyObject> {
         Python::with_gil(|py| {
             let mut dict = HashMap::new();
-            dict.insert("solver".to_string(), self.inner.solver.clone().into_pyobject(py).unwrap().into_any().unbind());
-            dict.insert("total_time".to_string(), self.inner.total_time_seconds.into_pyobject(py).unwrap().into_any().unbind());
-            dict.insert("setup_time".to_string(), self.inner.setup_time_seconds.into_pyobject(py).unwrap().into_any().unbind());
-            dict.insert("factorization_time".to_string(), self.inner.factorization_time_seconds.into_pyobject(py).unwrap().into_any().unbind());
-            dict.insert("solve_time".to_string(), self.inner.solve_time_seconds.into_pyobject(py).unwrap().into_any().unbind());
-            dict.insert("n_dofs".to_string(), self.inner.n_dofs.into_pyobject(py).unwrap().into_any().unbind());
-            dict.insert("n_nonzeros".to_string(), self.inner.n_nonzeros.into_pyobject(py).unwrap().into_any().unbind());
+            dict.insert(
+                "solver".to_string(),
+                self.inner
+                    .solver
+                    .clone()
+                    .into_pyobject(py)
+                    .unwrap()
+                    .into_any()
+                    .unbind(),
+            );
+            dict.insert(
+                "total_time".to_string(),
+                self.inner
+                    .total_time_seconds
+                    .into_pyobject(py)
+                    .unwrap()
+                    .into_any()
+                    .unbind(),
+            );
+            dict.insert(
+                "setup_time".to_string(),
+                self.inner
+                    .setup_time_seconds
+                    .into_pyobject(py)
+                    .unwrap()
+                    .into_any()
+                    .unbind(),
+            );
+            dict.insert(
+                "factorization_time".to_string(),
+                self.inner
+                    .factorization_time_seconds
+                    .into_pyobject(py)
+                    .unwrap()
+                    .into_any()
+                    .unbind(),
+            );
+            dict.insert(
+                "solve_time".to_string(),
+                self.inner
+                    .solve_time_seconds
+                    .into_pyobject(py)
+                    .unwrap()
+                    .into_any()
+                    .unbind(),
+            );
+            dict.insert(
+                "n_dofs".to_string(),
+                self.inner
+                    .n_dofs
+                    .into_pyobject(py)
+                    .unwrap()
+                    .into_any()
+                    .unbind(),
+            );
+            dict.insert(
+                "n_nonzeros".to_string(),
+                self.inner
+                    .n_nonzeros
+                    .into_pyobject(py)
+                    .unwrap()
+                    .into_any()
+                    .unbind(),
+            );
             if let Some(iters) = self.inner.iterations {
-                dict.insert("iterations".to_string(), iters.into_pyobject(py).unwrap().into_any().unbind());
+                dict.insert(
+                    "iterations".to_string(),
+                    iters.into_pyobject(py).unwrap().into_any().unbind(),
+                );
             }
             if let Some(res) = self.inner.residual {
-                dict.insert("residual".to_string(), res.into_pyobject(py).unwrap().into_any().unbind());
+                dict.insert(
+                    "residual".to_string(),
+                    res.into_pyobject(py).unwrap().into_any().unbind(),
+                );
             }
             dict
         })
@@ -973,7 +1036,9 @@ fn solve_with_materials(
         if mat_idx >= materials.len() {
             return Err(PyValueError::new_err(format!(
                 "Material index {} at row {} is out of bounds (n_materials={})",
-                mat_idx, i, materials.len()
+                mat_idx,
+                i,
+                materials.len()
             )));
         }
 
@@ -1061,8 +1126,14 @@ fn solve_with_materials(
         thickness,
         ..Default::default()
     };
-    let system = assemble_with_materials(&mesh.inner, &core_materials, &element_materials, &bcs, &options)
-        .map_err(|e| PyRuntimeError::new_err(format!("Assembly error: {}", e)))?;
+    let system = assemble_with_materials(
+        &mesh.inner,
+        &core_materials,
+        &element_materials,
+        &bcs,
+        &options,
+    )
+    .map_err(|e| PyRuntimeError::new_err(format!("Assembly error: {}", e)))?;
 
     // Apply constraints by elimination
     let n_dofs = system.n_dofs;
@@ -1078,7 +1149,10 @@ fn solve_with_materials(
         }
         // Recover stresses with per-element materials
         let stress_field = recover_stresses_with_materials(
-            &mesh.inner, &core_materials, &element_materials, &displacements
+            &mesh.inner,
+            &core_materials,
+            &element_materials,
+            &displacements,
         );
         let (element_stresses, von_mises_stresses) = extract_stress_data(&stress_field);
         return Ok(PyResults {
@@ -1140,7 +1214,10 @@ fn solve_with_materials(
 
     // Recover stresses with per-element materials
     let stress_field = recover_stresses_with_materials(
-        &mesh.inner, &core_materials, &element_materials, &displacements
+        &mesh.inner,
+        &core_materials,
+        &element_materials,
+        &displacements,
     );
     let (element_stresses, von_mises_stresses) = extract_stress_data(&stress_field);
 

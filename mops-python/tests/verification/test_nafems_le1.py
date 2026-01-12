@@ -255,11 +255,11 @@ def generate_elliptic_membrane_hex20(
                 node_map[(i_r, i_theta, i_z)] = node_idx
 
     # Generate hex20 elements
-    # Node ordering for hex20 (VTK/Gmsh convention):
+    # Node ordering for hex20 (mops-core convention):
     # Corner nodes: 0-7 (same as hex8)
     # Mid-edge nodes on bottom face: 8-11
-    # Mid-edge nodes on top face: 12-15
-    # Mid-edge nodes connecting bottom to top: 16-19
+    # Mid-edge nodes on vertical edges: 12-15
+    # Mid-edge nodes on top face: 16-19
 
     for elem_z in range(n_thick):
         for elem_r in range(n_radial):
@@ -281,23 +281,23 @@ def generate_elliptic_membrane_hex20(
                 n6 = node_map[(ir + 2, it + 2, iz + 2)]
                 n7 = node_map[(ir, it + 2, iz + 2)]
 
-                # Mid-edge nodes on bottom face
+                # Mid-edge nodes on bottom face (z=iz)
                 n8 = node_map[(ir + 1, it, iz)]      # edge 0-1
                 n9 = node_map[(ir + 2, it + 1, iz)]  # edge 1-2
                 n10 = node_map[(ir + 1, it + 2, iz)] # edge 2-3
                 n11 = node_map[(ir, it + 1, iz)]    # edge 3-0
 
-                # Mid-edge nodes on top face
-                n12 = node_map[(ir + 1, it, iz + 2)]      # edge 4-5
-                n13 = node_map[(ir + 2, it + 1, iz + 2)]  # edge 5-6
-                n14 = node_map[(ir + 1, it + 2, iz + 2)]  # edge 6-7
-                n15 = node_map[(ir, it + 1, iz + 2)]     # edge 7-4
+                # Mid-edge nodes on vertical edges (z=iz+1, connecting bottom to top)
+                n12 = node_map[(ir, it, iz + 1)]         # edge 0-4
+                n13 = node_map[(ir + 2, it, iz + 1)]     # edge 1-5
+                n14 = node_map[(ir + 2, it + 2, iz + 1)] # edge 2-6
+                n15 = node_map[(ir, it + 2, iz + 1)]     # edge 3-7
 
-                # Mid-edge nodes connecting bottom to top
-                n16 = node_map[(ir, it, iz + 1)]         # edge 0-4
-                n17 = node_map[(ir + 2, it, iz + 1)]     # edge 1-5
-                n18 = node_map[(ir + 2, it + 2, iz + 1)] # edge 2-6
-                n19 = node_map[(ir, it + 2, iz + 1)]     # edge 3-7
+                # Mid-edge nodes on top face (z=iz+2)
+                n16 = node_map[(ir + 1, it, iz + 2)]      # edge 4-5
+                n17 = node_map[(ir + 2, it + 1, iz + 2)]  # edge 5-6
+                n18 = node_map[(ir + 1, it + 2, iz + 2)]  # edge 6-7
+                n19 = node_map[(ir, it + 1, iz + 2)]     # edge 7-4
 
                 elements.append([
                     n0, n1, n2, n3, n4, n5, n6, n7,
@@ -1007,12 +1007,8 @@ class TestNAFEMSLE1Benchmark:
             f"sigma_yy={sigma_yy:.1f} seems unreasonably high"
         )
 
-    @pytest.mark.skip(reason="Hex20 element not yet wired into create_element()")
     def test_hex20_stress_concentration(self, steel_le1):
-        """Hex20 quadratic elements should show better convergence.
-
-        NOTE: Skipped until hex20 is wired into mops-core element dispatch.
-        """
+        """Hex20 quadratic elements should show better convergence."""
         mesh = generate_elliptic_membrane_hex20(
             n_radial=4, n_angular=8, n_thick=1
         )
