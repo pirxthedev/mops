@@ -238,12 +238,12 @@ For reduced integration variants:
 
 ### Phase 2: B-bar Formulation
 
-- [ ] Implement `Hex8Bbar` struct
-- [ ] Average dilatation computation
-- [ ] Modified B-matrix assembly
-- [ ] Unit tests
-- [ ] Nearly-incompressible test case (ν=0.499)
-- [ ] Add to Python bindings
+- [x] Implement `Hex8Bbar` struct
+- [x] Average dilatation computation
+- [x] Modified B-matrix assembly
+- [x] Unit tests
+- [x] Nearly-incompressible test case (ν=0.499)
+- [x] Add to Python bindings
 
 ### Phase 3: Documentation
 

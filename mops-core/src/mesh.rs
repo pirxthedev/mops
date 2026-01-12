@@ -27,6 +27,10 @@ pub enum ElementType {
     /// Uses 1-point volumetric and 2×2×2 deviatoric integration
     /// to mitigate shear locking in bending.
     Hex8SRI,
+    /// 8-node hexahedron with B-bar (mean dilatation) formulation.
+    /// Uses element-averaged volumetric strain to mitigate both
+    /// volumetric locking (nearly incompressible materials) and shear locking.
+    Hex8Bbar,
     /// 20-node hexahedron (quadratic).
     Hex20,
     /// 3-node triangle (plane stress/strain).
@@ -45,7 +49,7 @@ impl ElementType {
         match self {
             ElementType::Tet4 => 4,
             ElementType::Tet10 => 10,
-            ElementType::Hex8 | ElementType::Hex8SRI => 8,
+            ElementType::Hex8 | ElementType::Hex8SRI | ElementType::Hex8Bbar => 8,
             ElementType::Hex20 => 20,
             ElementType::Tri3 => 3,
             ElementType::Tri6 => 6,
@@ -61,6 +65,7 @@ impl ElementType {
             | ElementType::Tet10
             | ElementType::Hex8
             | ElementType::Hex8SRI
+            | ElementType::Hex8Bbar
             | ElementType::Hex20 => 3,
             ElementType::Tri3 | ElementType::Tri6 | ElementType::Quad4 | ElementType::Quad8 => 2,
         }

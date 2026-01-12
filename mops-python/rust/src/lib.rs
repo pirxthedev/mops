@@ -122,6 +122,7 @@ impl PyMesh {
             "tet10" => ElementType::Tet10,
             "hex8" => ElementType::Hex8,
             "hex8sri" => ElementType::Hex8SRI,
+            "hex8bbar" => ElementType::Hex8Bbar,
             "hex20" => ElementType::Hex20,
             "tri3" => ElementType::Tri3,
             "tri6" => ElementType::Tri6,
@@ -129,7 +130,7 @@ impl PyMesh {
             "quad8" => ElementType::Quad8,
             _ => {
                 return Err(PyValueError::new_err(format!(
-                    "Unknown element type: {}. Valid types: tet4, tet10, hex8, hex8sri, hex20, tri3, tri6, quad4, quad8",
+                    "Unknown element type: {}. Valid types: tet4, tet10, hex8, hex8sri, hex8bbar, hex20, tri3, tri6, quad4, quad8",
                     element_type
                 )))
             }
@@ -218,6 +219,7 @@ impl PyMesh {
             ElementType::Tet10 => "tet10".to_string(),
             ElementType::Hex8 => "hex8".to_string(),
             ElementType::Hex8SRI => "hex8sri".to_string(),
+            ElementType::Hex8Bbar => "hex8bbar".to_string(),
             ElementType::Hex20 => "hex20".to_string(),
             ElementType::Tri3 => "tri3".to_string(),
             ElementType::Tri6 => "tri6".to_string(),

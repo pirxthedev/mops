@@ -44,6 +44,7 @@ VTK_CELL_TYPES = {
     "tet10": 24,    # VTK_QUADRATIC_TETRA
     "hex8": 12,     # VTK_HEXAHEDRON
     "hex8sri": 12,  # VTK_HEXAHEDRON (same as hex8, just different integration)
+    "hex8bbar": 12, # VTK_HEXAHEDRON (same as hex8, just different integration)
     "hex20": 25,    # VTK_QUADRATIC_HEXAHEDRON
     # 2D elements
     "tri3": 5,      # VTK_TRIANGLE

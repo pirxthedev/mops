@@ -43,6 +43,7 @@ pub mod axisymmetric;
 pub mod gauss;
 pub mod hex20;
 pub mod hex8;
+pub mod hex8_bbar;
 pub mod hex8_sri;
 pub mod plane_strain;
 pub mod plane_stress;
@@ -55,6 +56,7 @@ pub use axisymmetric::{Quad4Axisymmetric, Tri3Axisymmetric};
 pub use gauss::{gauss_1d, gauss_hex, gauss_quad, gauss_tet, gauss_tri, GaussPoint};
 pub use hex20::Hex20;
 pub use hex8::Hex8;
+pub use hex8_bbar::Hex8Bbar;
 pub use hex8_sri::Hex8SRI;
 pub use plane_strain::{Quad4PlaneStrain, Tri3PlaneStrain};
 pub use plane_stress::{Quad4, Tri3};
@@ -150,6 +152,7 @@ pub fn create_element(element_type: ElementType) -> Box<dyn Element> {
         ElementType::Tet10 => Box::new(Tet10::new()),
         ElementType::Hex8 => Box::new(Hex8::new()),
         ElementType::Hex8SRI => Box::new(Hex8SRI::new()),
+        ElementType::Hex8Bbar => Box::new(Hex8Bbar::new()),
         ElementType::Hex20 => Box::new(Hex20::new()),
         ElementType::Tri3 | ElementType::Tri6 | ElementType::Quad4 | ElementType::Quad8 => {
             // Use default thickness of 1.0 for plane stress elements
@@ -246,6 +249,14 @@ mod tests {
     #[test]
     fn test_create_element_hex8_sri() {
         let element = create_element(ElementType::Hex8SRI);
+        assert_eq!(element.n_nodes(), 8);
+        assert_eq!(element.dofs_per_node(), 3);
+        assert_eq!(element.n_dofs(), 24);
+    }
+
+    #[test]
+    fn test_create_element_hex8_bbar() {
+        let element = create_element(ElementType::Hex8Bbar);
         assert_eq!(element.n_nodes(), 8);
         assert_eq!(element.dofs_per_node(), 3);
         assert_eq!(element.n_dofs(), 24);
