@@ -153,7 +153,17 @@ Side view:
 | Face DCD'C' (y = 0 plane) | u_y = 0 | Symmetry about x-z plane |
 | Face ABA'B' (x = 0 plane) | u_x = 0 | Symmetry about y-z plane |
 | Face BCB'C' (outer curved) | u_x = 0, u_y = 0 | Outer edge restrained |
-| Mid-plane (z = 0) | u_z = 0 | Anti-symmetry in z |
+| Outer ellipse curve at z=0 | u_z = 0 | Anti-symmetry reference |
+
+**Critical Implementation Note:** The mid-plane anti-symmetry condition u_z = 0 must be
+applied **only to the outer ellipse curve at z=0**, NOT to the entire mid-plane face.
+Constraining the full mid-plane produces membrane-only stress (~-0.9 MPa) instead of
+the correct bending stress (-5.38 MPa).
+
+**Correct Modeling Approach (verified against FeenoX):**
+1. Model the **full plate thickness** (z = -300 to z = +300)
+2. Apply u_z = 0 only on the outer ellipse curve at z = 0
+3. This allows the inner region to deform in bending while maintaining anti-symmetry
 
 **Note:** The boundary condition on face BCB'C' (u_x = u_y = 0) is unusual but specified
 in the NAFEMS benchmark to create a specific stress state.
