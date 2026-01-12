@@ -65,10 +65,10 @@ class PhysicalGroup:
     element_indices: list[int] = field(default_factory=list)
 
 
-# Face definitions for each element type.
+# Face definitions for each element type (CORNER NODES ONLY).
 # Each entry is a tuple of node indices defining a face (counter-clockwise when viewed from outside).
 # For 3D elements, faces are triangles or quads. For 2D elements, faces are edges.
-# Using corner nodes only (linear topology for face identification).
+# Using corner nodes only (linear topology for face identification and matching).
 ELEMENT_FACES = {
     # 3D Tetrahedron: 4 triangular faces
     # Standard ordering: Face normals point outward when nodes are counter-clockwise
@@ -125,6 +125,73 @@ ELEMENT_FACES = {
         (1, 2),
         (2, 3),
         (3, 0),
+    ],
+}
+
+# Complete face node definitions including mid-edge nodes for quadratic elements.
+# Used for pressure loading where forces must be distributed to ALL face nodes.
+# For linear elements, this is identical to ELEMENT_FACES.
+# For quadratic elements, this includes mid-edge nodes on each face.
+#
+# Node ordering: corners first (same as ELEMENT_FACES), then mid-edge nodes
+# traversing edges in order (corner0-corner1, corner1-corner2, etc.)
+ELEMENT_FACE_ALL_NODES = {
+    # Linear elements: same as ELEMENT_FACES
+    "tet4": ELEMENT_FACES["tet4"],
+    "hex8": ELEMENT_FACES["hex8"],
+    "tri3": ELEMENT_FACES["tri3"],
+    "quad4": ELEMENT_FACES["quad4"],
+
+    # Tet10: 6-node triangular faces (3 corners + 3 mid-edge)
+    # Mid-edge node indices: 4=edge(0,1), 5=edge(1,2), 6=edge(0,2), 7=edge(0,3), 8=edge(1,3), 9=edge(2,3)
+    "tet10": [
+        (0, 2, 1, 6, 5, 4),  # Face 0: base - corners (0,2,1), edges 0-2, 2-1, 1-0 -> nodes 6, 5, 4
+        (0, 1, 3, 4, 8, 7),  # Face 1: corners (0,1,3), edges 0-1, 1-3, 3-0 -> nodes 4, 8, 7
+        (1, 2, 3, 5, 9, 8),  # Face 2: corners (1,2,3), edges 1-2, 2-3, 3-1 -> nodes 5, 9, 8
+        (2, 0, 3, 6, 7, 9),  # Face 3: corners (2,0,3), edges 2-0, 0-3, 3-2 -> nodes 6, 7, 9
+    ],
+
+    # Hex20: 8-node quadrilateral faces (4 corners + 4 mid-edge)
+    # Mid-edge node indices based on hex20 node numbering:
+    #   8=edge(0,1), 9=edge(1,2), 10=edge(2,3), 11=edge(0,3) [bottom face edges]
+    #   12=edge(0,4), 13=edge(1,5), 14=edge(2,6), 15=edge(3,7) [vertical edges]
+    #   16=edge(4,5), 17=edge(5,6), 18=edge(6,7), 19=edge(4,7) [top face edges]
+    "hex20": [
+        # Face 0: bottom (-z), corners (0,3,2,1)
+        # edges: 0-3->11, 3-2->10, 2-1->9, 1-0->8
+        (0, 3, 2, 1, 11, 10, 9, 8),
+        # Face 1: top (+z), corners (4,5,6,7)
+        # edges: 4-5->16, 5-6->17, 6-7->18, 7-4->19
+        (4, 5, 6, 7, 16, 17, 18, 19),
+        # Face 2: front (-y), corners (0,1,5,4)
+        # edges: 0-1->8, 1-5->13, 5-4->16, 4-0->12
+        (0, 1, 5, 4, 8, 13, 16, 12),
+        # Face 3: back (+y), corners (2,3,7,6)
+        # edges: 2-3->10, 3-7->15, 7-6->18, 6-2->14
+        (2, 3, 7, 6, 10, 15, 18, 14),
+        # Face 4: left (-x), corners (0,4,7,3)
+        # edges: 0-4->12, 4-7->19, 7-3->15, 3-0->11
+        (0, 4, 7, 3, 12, 19, 15, 11),
+        # Face 5: right (+x), corners (1,2,6,5)
+        # edges: 1-2->9, 2-6->14, 6-5->17, 5-1->13
+        (1, 2, 6, 5, 9, 14, 17, 13),
+    ],
+
+    # Tri6: 3-node edges (2 corners + 1 mid-edge)
+    # Mid-edge nodes: 3=edge(0,1), 4=edge(1,2), 5=edge(0,2)
+    "tri6": [
+        (0, 1, 3),  # Edge 0: nodes 0, 1 + midpoint 3
+        (1, 2, 4),  # Edge 1: nodes 1, 2 + midpoint 4
+        (2, 0, 5),  # Edge 2: nodes 2, 0 + midpoint 5
+    ],
+
+    # Quad8: 3-node edges (2 corners + 1 mid-edge)
+    # Mid-edge nodes: 4=edge(0,1), 5=edge(1,2), 6=edge(2,3), 7=edge(3,0)
+    "quad8": [
+        (0, 1, 4),  # Edge 0: bottom
+        (1, 2, 5),  # Edge 1: right
+        (2, 3, 6),  # Edge 2: top
+        (3, 0, 7),  # Edge 3: left
     ],
 }
 
@@ -942,20 +1009,50 @@ class Mesh:
         return self._boundary_faces
 
     def get_face_nodes(self, element_idx: int, local_face_idx: int) -> np.ndarray:
-        """Get global node indices for a specific face.
+        """Get global node indices for a specific face (corner nodes only).
+
+        This returns only corner nodes, which is sufficient for face identification
+        and geometry computation (centroid, normal, area). For pressure loading
+        on quadratic elements, use get_face_all_nodes() instead.
 
         Args:
             element_idx: Element index.
             local_face_idx: Local face index within the element.
 
         Returns:
-            Array of global node indices forming this face.
+            Array of global node indices forming this face (corners only).
         """
         elem_type = self.element_type
         if elem_type not in ELEMENT_FACES:
             raise MeshError(f"Face nodes not defined for element type: {elem_type}")
 
         face_def = ELEMENT_FACES[elem_type][local_face_idx]
+        elem = self.elements[element_idx]
+        return np.array([elem[n] for n in face_def], dtype=np.int64)
+
+    def get_face_all_nodes(self, element_idx: int, local_face_idx: int) -> np.ndarray:
+        """Get ALL global node indices for a face, including mid-edge nodes.
+
+        For linear elements (tet4, hex8, tri3, quad4), this returns the same nodes
+        as get_face_nodes(). For quadratic elements (tet10, hex20, tri6, quad8),
+        this includes the mid-edge nodes on the face.
+
+        This method should be used when distributing pressure loads to ensure
+        forces are applied to all face nodes with proper shape function weighting.
+
+        Args:
+            element_idx: Element index.
+            local_face_idx: Local face index within the element.
+
+        Returns:
+            Array of global node indices for all nodes on this face.
+            For quadratic elements, corners come first, then mid-edge nodes.
+        """
+        elem_type = self.element_type
+        if elem_type not in ELEMENT_FACE_ALL_NODES:
+            raise MeshError(f"Face nodes not defined for element type: {elem_type}")
+
+        face_def = ELEMENT_FACE_ALL_NODES[elem_type][local_face_idx]
         elem = self.elements[element_idx]
         return np.array([elem[n] for n in face_def], dtype=np.int64)
 

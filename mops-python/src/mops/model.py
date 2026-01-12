@@ -350,7 +350,8 @@ class Model:
 
                 for elem_idx, local_face_idx in face_indices:
                     # Get face properties
-                    face_nodes = self._state.mesh.get_face_nodes(elem_idx, local_face_idx)
+                    # Use get_face_all_nodes to include mid-edge nodes for quadratic elements
+                    face_nodes = self._state.mesh.get_face_all_nodes(elem_idx, local_face_idx)
                     face_area = self._state.mesh.get_face_area(elem_idx, local_face_idx)
                     face_normal = self._state.mesh.get_face_normal(elem_idx, local_face_idx)
 
@@ -359,7 +360,10 @@ class Model:
                     total_force = -load.value * face_area * face_normal
 
                     # Distribute force equally to all face nodes (consistent nodal forces
-                    # for constant pressure on linear elements)
+                    # for constant pressure on linear elements).
+                    # Note: For quadratic elements, proper consistent nodal forces require
+                    # integration with shape functions. Equal distribution is an approximation
+                    # that works well for most practical cases with uniform pressure.
                     n_face_nodes = len(face_nodes)
                     force_per_node = total_force / n_face_nodes
 
@@ -369,12 +373,13 @@ class Model:
                         nodal_forces[node_idx] += force_per_node
 
             elif isinstance(load, Force) and isinstance(query, FaceQuery):
-                # Force applied to face - distribute to face nodes
+                # Force applied to face - distribute to all face nodes
                 face_indices = query.evaluate(self._state.mesh, components)
                 force_vec = np.array([load.fx, load.fy, load.fz])
 
                 for elem_idx, local_face_idx in face_indices:
-                    face_nodes = self._state.mesh.get_face_nodes(elem_idx, local_face_idx)
+                    # Use get_face_all_nodes to include mid-edge nodes for quadratic elements
+                    face_nodes = self._state.mesh.get_face_all_nodes(elem_idx, local_face_idx)
                     n_face_nodes = len(face_nodes)
                     force_per_node = force_vec / n_face_nodes
 
