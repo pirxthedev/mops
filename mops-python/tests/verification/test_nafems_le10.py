@@ -69,6 +69,7 @@ from mops import (
     Pressure,
     solve,
 )
+from mops.derived import compute_nodal_stresses, get_stress_at_point
 
 
 # =============================================================================
@@ -525,10 +526,48 @@ def get_sigma_yy_at_point_d(
     search_radius: float = 200.0,
     z_tol: float = 50.0,
 ) -> float:
-    """Extract sigma_yy stress at point D (2000, 0, 300).
+    """Extract sigma_yy stress at point D (2000, 0, 300) using nodal stress recovery.
 
-    Finds elements near point D on the top surface and averages their sigma_yy
-    values with inverse distance weighting.
+    Uses nodal stress smoothing (averaging element stresses to nodes) followed by
+    interpolation to the target point. This is the standard approach used by
+    FeenoX, Code Aster, Sparselizard, and other FEA codes for extracting stress
+    at boundary points.
+
+    Args:
+        mesh: The mesh
+        results: Solution results object
+        search_radius: Search radius from point D for interpolation (mm)
+        z_tol: Z tolerance (unused, kept for API compatibility)
+
+    Returns:
+        Interpolated sigma_yy stress at point D
+    """
+    # Use nodal stress recovery for accurate boundary stress extraction
+    stress_tensor = get_stress_at_point(
+        POINT_D_3D,
+        mesh.coords,
+        mesh.elements,
+        results.stress(),
+        search_radius=search_radius,
+    )
+
+    # sigma_yy is index 1 in stress vector [sigma_xx, sigma_yy, sigma_zz, tau_xy, tau_yz, tau_xz]
+    return float(stress_tensor[1])
+
+
+def get_sigma_yy_at_point_d_element_centroid(
+    mesh: Mesh,
+    results,
+    search_radius: float = 200.0,
+    z_tol: float = 50.0,
+) -> float:
+    """Extract sigma_yy using element centroid averaging (legacy method).
+
+    This method averages element stresses near point D weighted by inverse distance.
+    It tends to underestimate stress at boundary points because element stresses
+    are computed at interior Gauss points.
+
+    This function is kept for comparison purposes.
 
     Args:
         mesh: The mesh

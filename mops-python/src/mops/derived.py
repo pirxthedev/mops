@@ -315,3 +315,159 @@ def deviatoric_strain(strain: NDArray[np.float64]) -> NDArray[np.float64]:
     deviatoric[:, 1] -= em
     deviatoric[:, 2] -= em
     return deviatoric
+
+
+# =============================================================================
+# Nodal Stress Recovery
+# =============================================================================
+
+
+def compute_nodal_stresses(
+    coords: NDArray[np.float64],
+    elements: NDArray[np.int64],
+    element_stresses: NDArray[np.float64],
+) -> NDArray[np.float64]:
+    """Compute nodal stresses by averaging contributions from adjacent elements.
+
+    This performs stress smoothing where each node's stress is the average of
+    all elements that contain that node. This is essential for accurate stress
+    extraction at boundary points like edges and corners.
+
+    Args:
+        coords: Node coordinates array of shape (n_nodes, 3).
+        elements: Element connectivity array of shape (n_elements, nodes_per_element).
+        element_stresses: Element stress tensors of shape (n_elements, 6) in Voigt notation.
+
+    Returns:
+        Nodal stress tensors of shape (n_nodes, 6) in Voigt notation.
+
+    Example::
+
+        from mops import solve
+        from mops.derived import compute_nodal_stresses
+
+        results = solve(model)
+        nodal_stress = compute_nodal_stresses(
+            mesh.coords, mesh.elements, results.stress()
+        )
+        # Get sigma_yy at node 42
+        sigma_yy_node_42 = nodal_stress[42, 1]
+    """
+    n_nodes = coords.shape[0]
+    nodal_sums = np.zeros((n_nodes, 6), dtype=np.float64)
+    nodal_counts = np.zeros(n_nodes, dtype=np.int64)
+
+    # Accumulate element stress contributions to nodes
+    for elem_idx, elem_nodes in enumerate(elements):
+        stress = element_stresses[elem_idx]
+        for node_idx in elem_nodes:
+            nodal_sums[node_idx] += stress
+            nodal_counts[node_idx] += 1
+
+    # Compute averages (avoid division by zero)
+    nodal_counts = np.maximum(nodal_counts, 1)
+    nodal_stresses = nodal_sums / nodal_counts[:, np.newaxis]
+
+    return nodal_stresses
+
+
+def interpolate_stress_at_point(
+    target_point: tuple[float, float, float],
+    coords: NDArray[np.float64],
+    nodal_stresses: NDArray[np.float64],
+    search_radius: float | None = None,
+    k_nearest: int = 8,
+) -> NDArray[np.float64]:
+    """Interpolate stress at an arbitrary point using nodal stress values.
+
+    Uses inverse distance weighting (IDW) interpolation from nearby nodes.
+    This is useful for extracting stress at specific points like NAFEMS
+    benchmark verification points.
+
+    Args:
+        target_point: (x, y, z) coordinates of the target point.
+        coords: Node coordinates array of shape (n_nodes, 3).
+        nodal_stresses: Nodal stress tensors of shape (n_nodes, 6).
+        search_radius: Maximum distance to consider nodes. If None, uses k_nearest.
+        k_nearest: Number of nearest nodes to use if search_radius is None.
+
+    Returns:
+        Interpolated stress tensor of shape (6,) in Voigt notation.
+
+    Raises:
+        ValueError: If no nodes are found within the search criteria.
+    """
+    target = np.array(target_point)
+    distances = np.linalg.norm(coords - target, axis=1)
+
+    if search_radius is not None:
+        # Use all nodes within radius
+        mask = distances < search_radius
+        if not np.any(mask):
+            raise ValueError(
+                f"No nodes found within {search_radius} of point {target_point}"
+            )
+        nearby_indices = np.where(mask)[0]
+        nearby_distances = distances[mask]
+    else:
+        # Use k nearest nodes
+        sorted_indices = np.argsort(distances)
+        nearby_indices = sorted_indices[:k_nearest]
+        nearby_distances = distances[nearby_indices]
+
+    # Handle case where target is exactly at a node
+    min_dist = np.min(nearby_distances)
+    if min_dist < 1e-10:
+        exact_node = nearby_indices[np.argmin(nearby_distances)]
+        return nodal_stresses[exact_node].copy()
+
+    # Inverse distance weighting
+    weights = 1.0 / (nearby_distances + 1e-10)
+    weights /= np.sum(weights)
+
+    interpolated = np.zeros(6, dtype=np.float64)
+    for i, node_idx in enumerate(nearby_indices):
+        interpolated += weights[i] * nodal_stresses[node_idx]
+
+    return interpolated
+
+
+def get_stress_at_point(
+    target_point: tuple[float, float, float],
+    coords: NDArray[np.float64],
+    elements: NDArray[np.int64],
+    element_stresses: NDArray[np.float64],
+    search_radius: float | None = None,
+    k_nearest: int = 8,
+) -> NDArray[np.float64]:
+    """Convenience function to compute stress at a specific point.
+
+    Combines nodal stress recovery and interpolation in one call.
+    This is the recommended way to extract stress at boundary points.
+
+    Args:
+        target_point: (x, y, z) coordinates of the target point.
+        coords: Node coordinates array of shape (n_nodes, 3).
+        elements: Element connectivity array of shape (n_elements, nodes_per_element).
+        element_stresses: Element stress tensors of shape (n_elements, 6).
+        search_radius: Maximum distance for interpolation.
+        k_nearest: Number of nearest nodes if radius not specified.
+
+    Returns:
+        Interpolated stress tensor of shape (6,) in Voigt notation.
+
+    Example::
+
+        # NAFEMS LE10: get sigma_yy at point D (2000, 0, 300)
+        stress = get_stress_at_point(
+            (2000.0, 0.0, 300.0),
+            mesh.coords,
+            mesh.elements,
+            results.stress()
+        )
+        sigma_yy = stress[1]  # Should be close to -5.38 MPa
+    """
+    nodal_stresses = compute_nodal_stresses(coords, elements, element_stresses)
+    return interpolate_stress_at_point(
+        target_point, coords, nodal_stresses, search_radius, k_nearest
+    )
