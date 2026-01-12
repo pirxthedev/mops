@@ -128,9 +128,11 @@ impl PyMesh {
             "tri6" => ElementType::Tri6,
             "quad4" => ElementType::Quad4,
             "quad8" => ElementType::Quad8,
+            "tri3axisymmetric" => ElementType::Tri3Axisymmetric,
+            "quad4axisymmetric" => ElementType::Quad4Axisymmetric,
             _ => {
                 return Err(PyValueError::new_err(format!(
-                    "Unknown element type: {}. Valid types: tet4, tet10, hex8, hex8sri, hex8bbar, hex20, tri3, tri6, quad4, quad8",
+                    "Unknown element type: {}. Valid types: tet4, tet10, hex8, hex8sri, hex8bbar, hex20, tri3, tri6, quad4, quad8, tri3axisymmetric, quad4axisymmetric",
                     element_type
                 )))
             }
@@ -225,6 +227,8 @@ impl PyMesh {
             ElementType::Tri6 => "tri6".to_string(),
             ElementType::Quad4 => "quad4".to_string(),
             ElementType::Quad8 => "quad8".to_string(),
+            ElementType::Tri3Axisymmetric => "tri3axisymmetric".to_string(),
+            ElementType::Quad4Axisymmetric => "quad4axisymmetric".to_string(),
         }
     }
 
@@ -1280,14 +1284,17 @@ fn element_stiffness<'py>(
         "tet10" => ElementType::Tet10,
         "hex8" => ElementType::Hex8,
         "hex8sri" => ElementType::Hex8SRI,
+        "hex8bbar" => ElementType::Hex8Bbar,
         "hex20" => ElementType::Hex20,
         "tri3" => ElementType::Tri3,
         "tri6" => ElementType::Tri6,
         "quad4" => ElementType::Quad4,
         "quad8" => ElementType::Quad8,
+        "tri3axisymmetric" => ElementType::Tri3Axisymmetric,
+        "quad4axisymmetric" => ElementType::Quad4Axisymmetric,
         _ => {
             return Err(PyValueError::new_err(format!(
-                "Unknown element type: {}. Valid types: tet4, tet10, hex8, hex8sri, hex20, tri3, tri6, quad4, quad8",
+                "Unknown element type: {}. Valid types: tet4, tet10, hex8, hex8sri, hex8bbar, hex20, tri3, tri6, quad4, quad8, tri3axisymmetric, quad4axisymmetric",
                 element_type
             )))
         }
@@ -1345,14 +1352,17 @@ fn element_volume(element_type: &str, nodes: PyReadonlyArray2<f64>) -> PyResult<
         "tet10" => ElementType::Tet10,
         "hex8" => ElementType::Hex8,
         "hex8sri" => ElementType::Hex8SRI,
+        "hex8bbar" => ElementType::Hex8Bbar,
         "hex20" => ElementType::Hex20,
         "tri3" => ElementType::Tri3,
         "tri6" => ElementType::Tri6,
         "quad4" => ElementType::Quad4,
         "quad8" => ElementType::Quad8,
+        "tri3axisymmetric" => ElementType::Tri3Axisymmetric,
+        "quad4axisymmetric" => ElementType::Quad4Axisymmetric,
         _ => {
             return Err(PyValueError::new_err(format!(
-                "Unknown element type: {}. Valid types: tet4, tet10, hex8, hex8sri, hex20, tri3, tri6, quad4, quad8",
+                "Unknown element type: {}. Valid types: tet4, tet10, hex8, hex8sri, hex8bbar, hex20, tri3, tri6, quad4, quad8, tri3axisymmetric, quad4axisymmetric",
                 element_type
             )))
         }
@@ -1412,14 +1422,17 @@ fn compute_element_stress<'py>(
         "tet10" => ElementType::Tet10,
         "hex8" => ElementType::Hex8,
         "hex8sri" => ElementType::Hex8SRI,
+        "hex8bbar" => ElementType::Hex8Bbar,
         "hex20" => ElementType::Hex20,
         "tri3" => ElementType::Tri3,
         "tri6" => ElementType::Tri6,
         "quad4" => ElementType::Quad4,
         "quad8" => ElementType::Quad8,
+        "tri3axisymmetric" => ElementType::Tri3Axisymmetric,
+        "quad4axisymmetric" => ElementType::Quad4Axisymmetric,
         _ => {
             return Err(PyValueError::new_err(format!(
-                "Unknown element type: {}. Valid types: tet4, tet10, hex8, hex8sri, hex20, tri3, tri6, quad4, quad8",
+                "Unknown element type: {}. Valid types: tet4, tet10, hex8, hex8sri, hex8bbar, hex20, tri3, tri6, quad4, quad8, tri3axisymmetric, quad4axisymmetric",
                 element_type
             )))
         }

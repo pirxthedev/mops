@@ -279,6 +279,7 @@ GMSH_ELEMENT_TYPES = {
 SUPPORTED_ELEMENT_TYPES = frozenset([
     "tet4", "tet10", "hex8", "hex8sri", "hex8bbar", "hex20",
     "tri3", "tri6", "quad4", "quad8",
+    "tri3axisymmetric", "quad4axisymmetric",
 ])
 
 

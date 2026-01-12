@@ -51,6 +51,9 @@ VTK_CELL_TYPES = {
     "tri6": 22,     # VTK_QUADRATIC_TRIANGLE
     "quad4": 9,     # VTK_QUAD
     "quad8": 23,    # VTK_QUADRATIC_QUAD
+    # Axisymmetric elements (same VTK types as 2D counterparts)
+    "tri3axisymmetric": 5,   # VTK_TRIANGLE
+    "quad4axisymmetric": 9,  # VTK_QUAD
 }
 
 # Default colormaps for different field types

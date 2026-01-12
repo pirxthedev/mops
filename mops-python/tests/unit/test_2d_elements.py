@@ -843,3 +843,154 @@ class TestThicknessScalingAtElementLevel:
         assert model.thickness == 3.5
         assert model._state.thickness_assignments is not None
         assert len(model._state.thickness_assignments) == 1
+
+
+# =============================================================================
+# Axisymmetric Element Tests
+# =============================================================================
+
+
+@pytest.fixture
+def axisym_tri3_nodes() -> np.ndarray:
+    """Axisymmetric triangle in r-z plane (r=x, z=y, unused=z).
+
+    The axisymmetric formulation uses the x-coordinate as the radial (r)
+    coordinate and y as the axial (z) coordinate.
+    """
+    return np.array([
+        [1.0, 0.0, 0.0],  # r=1, z=0
+        [2.0, 0.0, 0.0],  # r=2, z=0
+        [1.5, 1.0, 0.0],  # r=1.5, z=1
+    ], dtype=np.float64)
+
+
+@pytest.fixture
+def axisym_quad4_nodes() -> np.ndarray:
+    """Axisymmetric quadrilateral in r-z plane."""
+    return np.array([
+        [1.0, 0.0, 0.0],  # r=1, z=0
+        [2.0, 0.0, 0.0],  # r=2, z=0
+        [2.0, 1.0, 0.0],  # r=2, z=1
+        [1.0, 1.0, 0.0],  # r=1, z=1
+    ], dtype=np.float64)
+
+
+class TestTri3Axisymmetric:
+    """Test axisymmetric 3-node triangle element."""
+
+    def test_stiffness_matrix_shape(self, axisym_tri3_nodes, steel):
+        """Stiffness matrix should be 6x6 (3 nodes * 2 DOFs)."""
+        k = element_stiffness("tri3axisymmetric", axisym_tri3_nodes, steel)
+        assert k.shape == (6, 6)
+
+    def test_stiffness_matrix_symmetry(self, axisym_tri3_nodes, steel):
+        """Stiffness matrix should be symmetric."""
+        k = element_stiffness("tri3axisymmetric", axisym_tri3_nodes, steel)
+        assert is_symmetric(k)
+
+    def test_stiffness_positive_semidefinite(self, axisym_tri3_nodes, steel):
+        """Stiffness matrix should be positive semi-definite."""
+        k = element_stiffness("tri3axisymmetric", axisym_tri3_nodes, steel)
+        assert is_positive_semidefinite(k)
+
+    def test_volume_is_revolution_volume(self, axisym_tri3_nodes):
+        """Volume should be 2*pi*r_centroid * area (revolution about z-axis)."""
+        vol = element_volume("tri3axisymmetric", axisym_tri3_nodes)
+        # Triangle area = 0.5 * base * height = 0.5 * 1 * 1 = 0.5
+        # Centroid r = (1 + 2 + 1.5) / 3 = 1.5
+        # Revolution volume = 2 * pi * r_centroid * area = 2 * pi * 1.5 * 0.5 = 1.5 * pi
+        expected = 2 * np.pi * 1.5 * 0.5
+        assert np.isclose(vol, expected, rtol=1e-10)
+
+    def test_rigid_body_modes(self, axisym_tri3_nodes, steel):
+        """Axisymmetric element should have 1 or 2 rigid body modes.
+
+        Unlike plane stress/strain which has 3 rigid body modes (2 translations + rotation),
+        axisymmetric elements have fewer:
+        - Axial (z) translation: always a rigid body mode (no strain)
+        - Radial translation: causes hoop strain epsilon_theta = u_r/r, so NOT rigid
+        - Rotation about z-axis: causes strain, so NOT rigid
+
+        The number depends on element position relative to the axis. For elements
+        away from the axis (r > 0), only axial translation is truly zero-strain.
+        """
+        k = element_stiffness("tri3axisymmetric", axisym_tri3_nodes, steel)
+        n_zero = count_zero_eigenvalues(k, rtol=1e-6)
+        # For elements away from axis, only axial translation is rigid body mode
+        # The tri3 test element has r ranging from 1.0 to 2.0, so expect 1-2 modes
+        assert n_zero >= 1 and n_zero <= 2, f"Expected 1-2 rigid body modes, got {n_zero}"
+
+    def test_stress_shape(self, axisym_tri3_nodes, steel):
+        """Stress tensor should have 6 components (converted from 4-component axi)."""
+        # Axisymmetric stress has 4 components: sigma_rr, sigma_zz, sigma_theta, tau_rz
+        # but gets converted to 6-component Voigt notation for consistency
+        u = np.zeros(6)
+        stress = compute_element_stress("tri3axisymmetric", axisym_tri3_nodes, u, steel)
+        assert stress.shape[1] == 6, "Should return 6 stress components"
+
+
+class TestQuad4Axisymmetric:
+    """Test axisymmetric 4-node quadrilateral element."""
+
+    def test_stiffness_matrix_shape(self, axisym_quad4_nodes, steel):
+        """Stiffness matrix should be 8x8 (4 nodes * 2 DOFs)."""
+        k = element_stiffness("quad4axisymmetric", axisym_quad4_nodes, steel)
+        assert k.shape == (8, 8)
+
+    def test_stiffness_matrix_symmetry(self, axisym_quad4_nodes, steel):
+        """Stiffness matrix should be symmetric."""
+        k = element_stiffness("quad4axisymmetric", axisym_quad4_nodes, steel)
+        assert is_symmetric(k)
+
+    def test_stiffness_positive_semidefinite(self, axisym_quad4_nodes, steel):
+        """Stiffness matrix should be positive semi-definite."""
+        k = element_stiffness("quad4axisymmetric", axisym_quad4_nodes, steel)
+        assert is_positive_semidefinite(k)
+
+    def test_volume_is_revolution_volume(self, axisym_quad4_nodes):
+        """Volume should be 2*pi*r_centroid * area (revolution about z-axis)."""
+        vol = element_volume("quad4axisymmetric", axisym_quad4_nodes)
+        # Rectangle area = 1 * 1 = 1
+        # Centroid r = (1 + 2) / 2 = 1.5
+        # Revolution volume = 2 * pi * r_centroid * area = 2 * pi * 1.5 * 1 = 3 * pi
+        expected = 2 * np.pi * 1.5 * 1.0
+        assert np.isclose(vol, expected, rtol=1e-10)
+
+    def test_rigid_body_modes(self, axisym_quad4_nodes, steel):
+        """Axisymmetric element should have 1 rigid body mode (axial translation only).
+
+        Radial translation causes hoop strain epsilon_theta = u_r/r, so it's NOT rigid.
+        Only pure axial (z) translation produces zero strain.
+        """
+        k = element_stiffness("quad4axisymmetric", axisym_quad4_nodes, steel)
+        n_zero = count_zero_eigenvalues(k, rtol=1e-6)
+        assert n_zero == 1, f"Expected 1 rigid body mode (axial translation), got {n_zero}"
+
+    def test_stress_shape(self, axisym_quad4_nodes, steel):
+        """Stress tensor should have 6 components."""
+        u = np.zeros(8)
+        stress = compute_element_stress("quad4axisymmetric", axisym_quad4_nodes, u, steel)
+        assert stress.shape[1] == 6, "Should return 6 stress components"
+
+
+class TestAxisymmetricVsPlaneDifferences:
+    """Test differences between axisymmetric and plane stress elements."""
+
+    def test_different_stiffness_from_plane(self, axisym_tri3_nodes, steel):
+        """Axisymmetric and plane stress should give different stiffness matrices."""
+        # Use same nodes but different element types
+        k_axi = element_stiffness("tri3axisymmetric", axisym_tri3_nodes, steel)
+        k_plane = element_stiffness("tri3", axisym_tri3_nodes, steel)
+
+        # They should be different due to the hoop strain term in axisymmetric
+        assert not np.allclose(k_axi, k_plane, rtol=1e-3), \
+            "Axisymmetric and plane stress should have different stiffness matrices"
+
+    def test_different_volume_computation(self, axisym_tri3_nodes):
+        """Axisymmetric volume is revolution, plane area is just area."""
+        vol_axi = element_volume("tri3axisymmetric", axisym_tri3_nodes)
+        area_plane = element_volume("tri3", axisym_tri3_nodes)
+
+        # Axisymmetric volume is much larger (revolution)
+        assert vol_axi > area_plane * 2, \
+            "Axisymmetric volume should be much larger than plane area"
