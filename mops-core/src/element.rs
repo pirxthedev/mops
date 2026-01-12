@@ -158,6 +158,8 @@ pub fn create_element(element_type: ElementType) -> Box<dyn Element> {
             // Use default thickness of 1.0 for plane stress elements
             create_element_with_thickness(element_type, 1.0)
         }
+        ElementType::Tri3Axisymmetric => Box::new(Tri3Axisymmetric::new()),
+        ElementType::Quad4Axisymmetric => Box::new(Quad4Axisymmetric::new()),
     }
 }
 
@@ -324,5 +326,21 @@ mod tests {
         assert_eq!(element.n_nodes(), 8);
         assert_eq!(element.dofs_per_node(), 2);
         assert_eq!(element.n_dofs(), 16);
+    }
+
+    #[test]
+    fn test_create_element_tri3_axisymmetric() {
+        let element = create_element(ElementType::Tri3Axisymmetric);
+        assert_eq!(element.n_nodes(), 3);
+        assert_eq!(element.dofs_per_node(), 2);
+        assert_eq!(element.n_dofs(), 6);
+    }
+
+    #[test]
+    fn test_create_element_quad4_axisymmetric() {
+        let element = create_element(ElementType::Quad4Axisymmetric);
+        assert_eq!(element.n_nodes(), 4);
+        assert_eq!(element.dofs_per_node(), 2);
+        assert_eq!(element.n_dofs(), 8);
     }
 }

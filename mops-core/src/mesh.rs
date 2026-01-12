@@ -41,6 +41,14 @@ pub enum ElementType {
     Quad4,
     /// 8-node quadrilateral (quadratic).
     Quad8,
+    /// 3-node triangle axisymmetric element.
+    /// Uses r-z plane formulation with axis of revolution along z-axis.
+    /// 2 DOFs per node: u_r (radial), u_z (axial).
+    Tri3Axisymmetric,
+    /// 4-node quadrilateral axisymmetric element.
+    /// Uses r-z plane formulation with axis of revolution along z-axis.
+    /// 2 DOFs per node: u_r (radial), u_z (axial).
+    Quad4Axisymmetric,
 }
 
 impl ElementType {
@@ -51,9 +59,9 @@ impl ElementType {
             ElementType::Tet10 => 10,
             ElementType::Hex8 | ElementType::Hex8SRI | ElementType::Hex8Bbar => 8,
             ElementType::Hex20 => 20,
-            ElementType::Tri3 => 3,
+            ElementType::Tri3 | ElementType::Tri3Axisymmetric => 3,
             ElementType::Tri6 => 6,
-            ElementType::Quad4 => 4,
+            ElementType::Quad4 | ElementType::Quad4Axisymmetric => 4,
             ElementType::Quad8 => 8,
         }
     }
@@ -67,7 +75,12 @@ impl ElementType {
             | ElementType::Hex8SRI
             | ElementType::Hex8Bbar
             | ElementType::Hex20 => 3,
-            ElementType::Tri3 | ElementType::Tri6 | ElementType::Quad4 | ElementType::Quad8 => 2,
+            ElementType::Tri3
+            | ElementType::Tri6
+            | ElementType::Quad4
+            | ElementType::Quad8
+            | ElementType::Tri3Axisymmetric
+            | ElementType::Quad4Axisymmetric => 2,
         }
     }
 
@@ -403,6 +416,8 @@ mod tests {
         assert_eq!(ElementType::Tri6.dofs_per_node(), 2);
         assert_eq!(ElementType::Quad4.dofs_per_node(), 2);
         assert_eq!(ElementType::Quad8.dofs_per_node(), 2);
+        assert_eq!(ElementType::Tri3Axisymmetric.dofs_per_node(), 2);
+        assert_eq!(ElementType::Quad4Axisymmetric.dofs_per_node(), 2);
     }
 
     #[test]
@@ -410,5 +425,18 @@ mod tests {
         assert_eq!(ElementType::Hex8SRI.n_nodes(), 8);
         assert_eq!(ElementType::Hex8SRI.dimension(), 3);
         assert_eq!(ElementType::Hex8SRI.dofs_per_node(), 3);
+    }
+
+    #[test]
+    fn test_element_type_axisymmetric() {
+        // Tri3Axisymmetric
+        assert_eq!(ElementType::Tri3Axisymmetric.n_nodes(), 3);
+        assert_eq!(ElementType::Tri3Axisymmetric.dimension(), 2);
+        assert_eq!(ElementType::Tri3Axisymmetric.dofs_per_node(), 2);
+
+        // Quad4Axisymmetric
+        assert_eq!(ElementType::Quad4Axisymmetric.n_nodes(), 4);
+        assert_eq!(ElementType::Quad4Axisymmetric.dimension(), 2);
+        assert_eq!(ElementType::Quad4Axisymmetric.dofs_per_node(), 2);
     }
 }
