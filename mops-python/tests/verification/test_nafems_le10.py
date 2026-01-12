@@ -232,11 +232,7 @@ def generate_thick_plate_hex20(
     Returns:
         Hex20 mesh for the quarter thick plate
     """
-    nodes = []
-    elements = []
-
-    # For hex20, we need nodes at corners and mid-edges
-    # Use 2x refinement in parameter space
+    # For hex20, we use a 2x refined parameter space
     n_r_nodes = 2 * n_radial + 1
     n_theta_nodes = 2 * n_angular + 1
     n_z_nodes = 2 * n_thick + 1
@@ -252,12 +248,60 @@ def generate_thick_plate_hex20(
     # Thickness positions
     z_coords = np.linspace(0, thickness, n_z_nodes)
 
-    # Generate all nodes on the refined grid
-    node_map = {}
+    # First pass: determine which (ir, it, iz) positions are used by Hex20 elements
+    # Hex20 uses corner nodes (all even) and edge-midpoint nodes (exactly one odd)
+    # NOT face-centers (two odd) or volume-centers (three odd)
+    used_positions: set[tuple[int, int, int]] = set()
 
-    for i_z, z in enumerate(z_coords):
-        for i_r, r_param in enumerate(r_params):
-            for i_theta, theta in enumerate(angles):
+    for elem_z in range(n_thick):
+        for elem_r in range(n_radial):
+            for elem_theta in range(n_angular):
+                ir = 2 * elem_r
+                it = 2 * elem_theta
+                iz = 2 * elem_z
+
+                # Corner nodes (8) - all coordinates even
+                used_positions.add((ir, it, iz))
+                used_positions.add((ir + 2, it, iz))
+                used_positions.add((ir + 2, it + 2, iz))
+                used_positions.add((ir, it + 2, iz))
+                used_positions.add((ir, it, iz + 2))
+                used_positions.add((ir + 2, it, iz + 2))
+                used_positions.add((ir + 2, it + 2, iz + 2))
+                used_positions.add((ir, it + 2, iz + 2))
+
+                # Mid-edge nodes on bottom face (4) - one of ir/it is odd, iz even
+                used_positions.add((ir + 1, it, iz))
+                used_positions.add((ir + 2, it + 1, iz))
+                used_positions.add((ir + 1, it + 2, iz))
+                used_positions.add((ir, it + 1, iz))
+
+                # Mid-edge nodes on vertical edges (4) - ir/it even, iz odd
+                used_positions.add((ir, it, iz + 1))
+                used_positions.add((ir + 2, it, iz + 1))
+                used_positions.add((ir + 2, it + 2, iz + 1))
+                used_positions.add((ir, it + 2, iz + 1))
+
+                # Mid-edge nodes on top face (4) - one of ir/it is odd, iz even
+                used_positions.add((ir + 1, it, iz + 2))
+                used_positions.add((ir + 2, it + 1, iz + 2))
+                used_positions.add((ir + 1, it + 2, iz + 2))
+                used_positions.add((ir, it + 1, iz + 2))
+
+    # Generate only the used nodes
+    nodes = []
+    node_map: dict[tuple[int, int, int], int] = {}
+
+    for i_z in range(n_z_nodes):
+        for i_r in range(n_r_nodes):
+            for i_theta in range(n_theta_nodes):
+                if (i_r, i_theta, i_z) not in used_positions:
+                    continue
+
+                r_param = r_params[i_r]
+                theta = angles[i_theta]
+                z = z_coords[i_z]
+
                 x_inner, y_inner = ellipse_point(INNER_D, INNER_A, theta)
                 x_outer, y_outer = ellipse_point(OUTER_C, OUTER_B, theta)
 
@@ -274,6 +318,7 @@ def generate_thick_plate_hex20(
     # Mid-edge nodes on bottom face: 8-11
     # Mid-edge nodes on vertical edges: 12-15
     # Mid-edge nodes on top face: 16-19
+    elements = []
 
     for elem_z in range(n_thick):
         for elem_r in range(n_radial):
@@ -451,6 +496,7 @@ def get_sigma_yy_at_point_d(
     mesh: Mesh,
     results,
     search_radius: float = 200.0,
+    z_tol: float = 50.0,
 ) -> float:
     """Extract sigma_yy stress at point D (2000, 0, 300).
 
@@ -461,11 +507,12 @@ def get_sigma_yy_at_point_d(
         mesh: The mesh
         results: Solution results object
         search_radius: Search radius from point D in mm
+        z_tol: Z tolerance for finding elements near top surface (mm)
 
     Returns:
         Weighted average sigma_yy stress at point D
     """
-    nearby_elements = get_elements_near_point_d(mesh, search_radius)
+    nearby_elements = get_elements_near_point_d(mesh, search_radius, z_tol=z_tol)
 
     if not nearby_elements:
         raise ValueError(f"No elements found near point D within {search_radius} mm")
@@ -814,15 +861,8 @@ class TestNAFEMSLE10Benchmark:
         # Stress magnitude should be reasonable (not absurdly large)
         assert abs(sigma_yy) < 1000, f"sigma_yy={sigma_yy:.2f} seems unreasonably large"
 
-    @pytest.mark.skip(reason="Hex20 mesh generator creates orphan nodes - needs rewrite")
     def test_hex20_stress(self, steel_le10):
-        """Hex20 quadratic elements should show better convergence.
-
-        NOTE: Skipped - generate_thick_plate_hex20() creates orphan nodes because
-        it generates all nodes on a refined grid but Hex20 serendipity elements
-        only use corner and edge-midpoint nodes (no face/volume centers). The mesh
-        generator needs to be rewritten to only create used nodes.
-        """
+        """Hex20 quadratic elements should show better convergence."""
         mesh = generate_thick_plate_hex20(
             n_radial=4, n_angular=8, n_thick=2
         )
@@ -830,7 +870,8 @@ class TestNAFEMSLE10Benchmark:
         model = self._build_le10_model(mesh, steel_le10)
         results = solve(model)
 
-        sigma_yy = get_sigma_yy_at_point_d(mesh, results, search_radius=300)
+        # Use larger z_tol since coarse mesh has element centroids far from top surface
+        sigma_yy = get_sigma_yy_at_point_d(mesh, results, search_radius=300, z_tol=100)
 
         # Hex20 should produce results
         assert not np.isnan(sigma_yy)
