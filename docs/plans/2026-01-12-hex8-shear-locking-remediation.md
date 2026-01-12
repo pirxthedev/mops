@@ -227,12 +227,12 @@ For reduced integration variants:
 
 ### Phase 1: Selective Reduced Integration
 
-- [ ] Implement `Hex8SRI` struct
-- [ ] Add B-matrix decomposition (B_vol, B_dev)
-- [ ] 1-point volumetric integration
-- [ ] 2×2×2 deviatoric integration
-- [ ] Unit tests (patch tests, symmetry)
-- [ ] Add to Python bindings
+- [x] Implement `Hex8SRI` struct
+- [x] Add B-matrix decomposition (B_vol, B_dev)
+- [x] 1-point volumetric integration
+- [x] 2×2×2 deviatoric integration
+- [x] Unit tests (patch tests, symmetry)
+- [x] Add to Python bindings
 - [ ] Cantilever beam verification test
 - [ ] NAFEMS LE10 comparison test
 
