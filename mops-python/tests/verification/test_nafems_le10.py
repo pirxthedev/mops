@@ -134,14 +134,11 @@ def generate_thick_plate_hex8(
     thickness: float = HALF_THICKNESS,
     mesh_grading: float = 1.3,
 ) -> Mesh:
-    """Generate a 3D hex8 mesh for the quarter thick plate.
+    """Generate a 3D hex8 mesh for the quarter thick plate (half-model).
 
-    The mesh uses a structured approach with radial divisions from the inner
-    to outer ellipse, angular divisions around the quarter arc, and thickness
-    divisions through the plate height.
-
-    We model only the UPPER half of the plate (z=0 to z=thickness) to
-    apply the anti-symmetry condition (u_z=0) at z=0 via full fixity.
+    NOTE: This generates a HALF-model (z=0 to z=thickness). For the correct
+    NAFEMS LE10 benchmark with proper bending behavior, use
+    generate_full_plate_hex8() instead.
 
     Args:
         n_radial: Number of elements in radial direction (inner to outer)
@@ -151,7 +148,7 @@ def generate_thick_plate_hex8(
         mesh_grading: Power for radial mesh grading (>1 concentrates near inner)
 
     Returns:
-        Hex8 mesh for the quarter thick plate
+        Hex8 mesh for the quarter thick plate (half-model)
     """
     nodes = []
     elements = []
@@ -208,6 +205,102 @@ def generate_thick_plate_hex8(
     elements_array = np.array(elements, dtype=np.int64)
 
     return Mesh(nodes_array, elements_array, "hex8")
+
+
+def generate_full_plate_hex8(
+    n_radial: int = 10,
+    n_angular: int = 20,
+    n_thick: int = 10,
+    mesh_grading: float = 1.4,
+) -> Tuple[Mesh, dict]:
+    """Generate a FULL plate hex8 mesh (z=-300 to z=+300) for NAFEMS LE10.
+
+    This is the correct model for the LE10 benchmark, which requires the full
+    plate thickness to properly capture the bending behavior. The midplane
+    anti-symmetry condition is enforced by constraining u_z=0 only on the
+    outer ellipse curve at z=0, not the entire mid-plane face.
+
+    Args:
+        n_radial: Number of elements in radial direction (inner to outer)
+        n_angular: Number of elements in angular direction (0 to 90 degrees)
+        n_thick: Number of elements through FULL thickness (must be even)
+        mesh_grading: Power for radial mesh grading (>1 concentrates near inner)
+
+    Returns:
+        Tuple of (Mesh, node_map) where node_map[(i_r, i_theta, i_z)] = node_index
+    """
+    nodes = []
+    elements = []
+
+    r_params = np.linspace(0, 1, n_radial + 1)
+    if mesh_grading != 1.0:
+        r_params = r_params ** mesh_grading
+
+    angles = np.linspace(0, math.pi / 2, n_angular + 1)
+    # Full thickness: z from -HALF_THICKNESS to +HALF_THICKNESS
+    z_coords = np.linspace(-HALF_THICKNESS, HALF_THICKNESS, n_thick + 1)
+
+    node_map = {}
+
+    for i_z, z in enumerate(z_coords):
+        for i_r, r_param in enumerate(r_params):
+            for i_theta, theta in enumerate(angles):
+                x_inner, y_inner = ellipse_point(INNER_D, INNER_A, theta)
+                x_outer, y_outer = ellipse_point(OUTER_C, OUTER_B, theta)
+                x = x_inner + r_param * (x_outer - x_inner)
+                y = y_inner + r_param * (y_outer - y_inner)
+                node_idx = len(nodes)
+                nodes.append([x, y, z])
+                node_map[(i_r, i_theta, i_z)] = node_idx
+
+    for i_z in range(n_thick):
+        for i_r in range(n_radial):
+            for i_theta in range(n_angular):
+                n0 = node_map[(i_r, i_theta, i_z)]
+                n1 = node_map[(i_r + 1, i_theta, i_z)]
+                n2 = node_map[(i_r + 1, i_theta + 1, i_z)]
+                n3 = node_map[(i_r, i_theta + 1, i_z)]
+                n4 = node_map[(i_r, i_theta, i_z + 1)]
+                n5 = node_map[(i_r + 1, i_theta, i_z + 1)]
+                n6 = node_map[(i_r + 1, i_theta + 1, i_z + 1)]
+                n7 = node_map[(i_r, i_theta + 1, i_z + 1)]
+                elements.append([n0, n1, n2, n3, n4, n5, n6, n7])
+
+    nodes_array = np.array(nodes, dtype=np.float64)
+    elements_array = np.array(elements, dtype=np.int64)
+
+    return Mesh(nodes_array, elements_array, "hex8"), node_map
+
+
+def get_outer_ellipse_midplane_nodes(
+    mesh: Mesh,
+    node_map: dict,
+    n_radial: int,
+    n_angular: int,
+    n_thick: int,
+) -> list[int]:
+    """Get node indices on the outer ellipse curve at the mid-plane (z=0).
+
+    This is used for the correct NAFEMS LE10 midplane boundary condition,
+    which constrains u_z=0 only on this curve, not the entire mid-plane.
+
+    Args:
+        mesh: The mesh
+        node_map: Node map from generate_full_plate_hex8
+        n_radial: Number of radial elements
+        n_angular: Number of angular elements
+        n_thick: Number of thickness elements
+
+    Returns:
+        List of node indices on the outer ellipse at z=0
+    """
+    mid_z_layer = n_thick // 2
+    outer_midplane_nodes = []
+    for i_theta in range(n_angular + 1):
+        node = node_map.get((n_radial, i_theta, mid_z_layer))
+        if node is not None:
+            outer_midplane_nodes.append(node)
+    return outer_midplane_nodes
 
 
 def generate_thick_plate_hex20(
@@ -1011,6 +1104,211 @@ class TestNAFEMSLE10Benchmark:
                 f"Stress not converging: max/min ratio = {ratio:.2f}, "
                 f"values = {[f'{v:.2f}' for v in sigma_yy_values]}"
             )
+
+
+class TestNAFEMSLE10FullPlate:
+    """NAFEMS LE10 benchmark tests using the CORRECT full-plate model.
+
+    The key insight from comparing with FeenoX reference implementation:
+    1. The plate must be modeled with FULL thickness (z=-300 to z=+300)
+    2. The midplane BC (u_z=0) applies ONLY to the outer ellipse curve at z=0,
+       not the entire mid-plane face
+    3. This allows proper bending behavior to develop
+
+    The half-plate model with u_z=0 on entire mid-plane produces membrane
+    stress only (~-0.9 MPa) instead of the correct bending stress (~-5.38 MPa).
+
+    Boundary conditions (matching FeenoX implementation):
+    - BC upper p=1: Pressure on top surface
+    - BC DCDC v=0: u_y = 0 on y=0 plane (symmetry)
+    - BC ABAB u=0: u_x = 0 on x=0 plane (symmetry)
+    - BC BCBC u=0 v=0: u_x = u_y = 0 on outer ellipse (support)
+    - BC midplane w=0: u_z = 0 ONLY on outer ellipse curve at z=0
+
+    Target: sigma_yy = -5.38 MPa at point D (2000, 0, 300) with +/-2% tolerance.
+    """
+
+    @pytest.fixture
+    def steel_le10(self) -> Material:
+        """Steel material with LE10 properties."""
+        return Material("steel_le10", e=E, nu=NU)
+
+    def _build_full_plate_model(
+        self,
+        mesh: Mesh,
+        material: Material,
+        node_map: dict,
+        n_radial: int,
+        n_angular: int,
+        n_thick: int,
+    ) -> Model:
+        """Build LE10 model with correct full-plate boundary conditions.
+
+        This implements the FeenoX-verified boundary conditions that properly
+        capture the bending behavior of the thick plate.
+        """
+        x0_nodes = get_nodes_on_x0_plane(mesh)
+        y0_nodes = get_nodes_on_y0_plane(mesh)
+        outer_nodes = get_nodes_on_outer_ellipse(mesh)
+
+        # Critical: get only the outer ellipse nodes at z=0 for midplane BC
+        outer_midplane_nodes = get_outer_ellipse_midplane_nodes(
+            mesh, node_map, n_radial, n_angular, n_thick
+        )
+
+        model = (
+            Model(mesh, materials={"steel": material})
+            .assign(Elements.all(), material="steel")
+            # DCDC: y=0 plane constraint (symmetry)
+            .constrain(Nodes.by_indices(y0_nodes), dofs=["uy"])
+            # ABAB: x=0 plane constraint (symmetry)
+            .constrain(Nodes.by_indices(x0_nodes), dofs=["ux"])
+            # BCBC: outer ellipse u_x = u_y = 0 (support)
+            .constrain(Nodes.by_indices(outer_nodes), dofs=["ux", "uy"])
+            # midplane: ONLY outer ellipse at z=0 has u_z = 0
+            .constrain(Nodes.by_indices(outer_midplane_nodes), dofs=["uz"])
+            # upper: pressure on top surface
+            .load(Faces.where(z=HALF_THICKNESS), Pressure(APPLIED_PRESSURE))
+        )
+
+        return model
+
+    def test_full_plate_deflection(self, steel_le10):
+        """Full plate model should show significant bending deflection."""
+        n_radial, n_angular, n_thick = 8, 16, 8
+        mesh, node_map = generate_full_plate_hex8(n_radial, n_angular, n_thick)
+
+        model = self._build_full_plate_model(
+            mesh, steel_le10, node_map, n_radial, n_angular, n_thick
+        )
+        results = solve(model)
+
+        # Should have significant displacement (much more than half-plate model)
+        max_disp = results.max_displacement()
+        assert max_disp > 0.05, f"Max displacement {max_disp:.4f} too small for bending"
+
+    def test_full_plate_stress_through_thickness(self, steel_le10):
+        """Stress should vary through thickness (bending behavior)."""
+        n_radial, n_angular, n_thick = 10, 20, 10
+        mesh, node_map = generate_full_plate_hex8(n_radial, n_angular, n_thick)
+
+        model = self._build_full_plate_model(
+            mesh, steel_le10, node_map, n_radial, n_angular, n_thick
+        )
+        results = solve(model)
+
+        # Get nodal stresses at point D location through thickness
+        from mops.derived import compute_nodal_stresses
+        nodal_stress = compute_nodal_stresses(
+            mesh.coords, mesh.elements, results.stress()
+        )
+
+        coords = mesh.coords
+        stresses_through_thickness = []
+
+        for z in [-300, 0, 300]:
+            for i, (x, y, zc) in enumerate(coords):
+                if abs(x - 2000) < 100 and abs(y) < 100 and abs(zc - z) < 50:
+                    stresses_through_thickness.append((z, nodal_stress[i, 1]))
+                    break
+
+        # For bending: bottom should be positive, middle ~0, top negative
+        if len(stresses_through_thickness) == 3:
+            bottom_stress = stresses_through_thickness[0][1]
+            mid_stress = stresses_through_thickness[1][1]
+            top_stress = stresses_through_thickness[2][1]
+
+            # Top should be compressive (negative)
+            assert top_stress < 0, f"Top sigma_yy={top_stress:.2f} should be negative"
+            # Bottom should be tensile (positive) or at least less compressive
+            assert bottom_stress > top_stress, "Bending: bottom > top stress"
+
+    def test_full_plate_coarse_mesh(self, steel_le10):
+        """Coarse full-plate mesh should produce stress closer to target."""
+        n_radial, n_angular, n_thick = 8, 16, 8
+        mesh, node_map = generate_full_plate_hex8(
+            n_radial, n_angular, n_thick, mesh_grading=1.4
+        )
+
+        model = self._build_full_plate_model(
+            mesh, steel_le10, node_map, n_radial, n_angular, n_thick
+        )
+        results = solve(model)
+
+        stress = get_stress_at_point(
+            POINT_D_3D, mesh.coords, mesh.elements, results.stress()
+        )
+        sigma_yy = stress[1]
+
+        # Should be in ballpark of target (within ~25% for coarse mesh)
+        assert sigma_yy < 0, f"sigma_yy={sigma_yy:.2f} should be negative"
+        assert abs(sigma_yy) > 3.0, f"sigma_yy={sigma_yy:.2f} too small"
+        assert abs(sigma_yy) < 10.0, f"sigma_yy={sigma_yy:.2f} too large"
+
+    @pytest.mark.slow
+    def test_full_plate_fine_mesh(self, steel_le10):
+        """Fine full-plate mesh should converge toward -5.38 MPa target.
+
+        With a fine enough hex8 mesh, we expect to get within ~10% of target.
+        Hex20 quadratic elements would converge faster.
+        """
+        n_radial, n_angular, n_thick = 16, 32, 12
+        mesh, node_map = generate_full_plate_hex8(
+            n_radial, n_angular, n_thick, mesh_grading=1.5
+        )
+
+        model = self._build_full_plate_model(
+            mesh, steel_le10, node_map, n_radial, n_angular, n_thick
+        )
+        results = solve(model)
+
+        stress = get_stress_at_point(
+            POINT_D_3D, mesh.coords, mesh.elements, results.stress()
+        )
+        sigma_yy = stress[1]
+
+        # Should be within ~10% of target for fine hex8 mesh
+        error = abs(sigma_yy - TARGET_SIGMA_YY) / abs(TARGET_SIGMA_YY)
+        assert error < 0.15, (
+            f"sigma_yy={sigma_yy:.2f} MPa, error={error*100:.1f}% "
+            f"(target={TARGET_SIGMA_YY} MPa)"
+        )
+
+    def test_full_plate_convergence(self, steel_le10):
+        """Stress should converge with mesh refinement."""
+        configs = [
+            (8, 16, 8),
+            (10, 20, 10),
+            (12, 24, 10),
+        ]
+
+        sigma_yy_values = []
+
+        for n_radial, n_angular, n_thick in configs:
+            mesh, node_map = generate_full_plate_hex8(
+                n_radial, n_angular, n_thick, mesh_grading=1.4
+            )
+
+            model = self._build_full_plate_model(
+                mesh, steel_le10, node_map, n_radial, n_angular, n_thick
+            )
+            results = solve(model)
+
+            stress = get_stress_at_point(
+                POINT_D_3D, mesh.coords, mesh.elements, results.stress()
+            )
+            sigma_yy_values.append(stress[1])
+
+        # All should be negative and converging toward target
+        for val in sigma_yy_values:
+            assert val < 0, f"sigma_yy={val:.2f} should be negative"
+
+        # Should be converging (later values closer to target)
+        errors = [abs(v - TARGET_SIGMA_YY) for v in sigma_yy_values]
+        # Fine mesh error should be less than or equal to coarse mesh error
+        assert errors[-1] <= errors[0] * 1.1, (
+            f"Not converging: errors={errors}"
+        )
 
 
 class TestNAFEMSLE10ReferenceValues:

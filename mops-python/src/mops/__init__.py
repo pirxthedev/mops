@@ -39,7 +39,7 @@ from mops._core import (
     solver_info,
     version,
 )
-from mops.mesh import Mesh, MeshError
+from mops.mesh import Mesh, MeshError, PhysicalGroup
 from mops.model import Model
 from mops.loads import Force, Pressure, Moment
 from mops.query import Nodes, Elements, Faces
@@ -94,6 +94,7 @@ __all__ = [
     "Material",
     "Mesh",
     "MeshError",
+    "PhysicalGroup",
     "Results",
     "SolverConfig",
     # Python classes

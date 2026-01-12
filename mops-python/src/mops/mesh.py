@@ -27,6 +27,7 @@ Example::
 from __future__ import annotations
 
 import io
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -37,6 +38,31 @@ from mops._core import Mesh as _CoreMesh
 
 if TYPE_CHECKING:
     pass
+
+
+@dataclass
+class PhysicalGroup:
+    """A named physical group from Gmsh.
+
+    Physical groups in Gmsh are named collections of geometric entities
+    (points, curves, surfaces, volumes) that can be used for:
+    - Applying boundary conditions to named surfaces
+    - Assigning materials to named volumes
+    - Extracting results for specific regions
+
+    Attributes:
+        name: User-defined name for this physical group.
+        dimension: Topological dimension (0=point, 1=curve, 2=surface, 3=volume).
+        tag: Gmsh physical group tag (integer identifier).
+        node_indices: 0-based node indices belonging to this group.
+        element_indices: 0-based element indices belonging to this group (for dim > 0).
+    """
+
+    name: str
+    dimension: int
+    tag: int
+    node_indices: list[int] = field(default_factory=list)
+    element_indices: list[int] = field(default_factory=list)
 
 
 # Face definitions for each element type.
@@ -216,6 +242,8 @@ class Mesh:
         nodes_or_inner: NDArray[np.float64] | _CoreMesh,
         elements_or_type: NDArray[np.int64] | str | None = None,
         element_type: str | None = None,
+        *,
+        physical_groups: dict[str, PhysicalGroup] | None = None,
     ) -> None:
         """Initialize Mesh from arrays or internal core mesh.
 
@@ -230,6 +258,7 @@ class Mesh:
             nodes_or_inner: Either Nx3 array of node coordinates, or internal core mesh.
             elements_or_type: Either MxK array of element connectivity, or element type string.
             element_type: Element type string (only when using array form).
+            physical_groups: Optional dict mapping group names to PhysicalGroup objects.
         """
         # Detect which calling convention is being used
         if isinstance(nodes_or_inner, _CoreMesh):
@@ -255,6 +284,9 @@ class Mesh:
 
             self._inner = _CoreMesh(nodes, elements, element_type)
             self._element_type = element_type
+
+        # Store physical groups (empty dict if none provided)
+        self._physical_groups: dict[str, PhysicalGroup] = physical_groups or {}
 
     @classmethod
     def from_arrays(
@@ -372,6 +404,10 @@ class Mesh:
         must already have a generated mesh (call gmsh.model.mesh.generate()
         before this method).
 
+        Physical groups defined in Gmsh are extracted and made available
+        through the mesh.physical_groups property. This allows applying
+        boundary conditions to named surfaces/regions.
+
         Args:
             model: A gmsh.model object with a generated mesh.
             element_type: Optional element type to extract. If None, uses the
@@ -379,7 +415,7 @@ class Mesh:
                 Supported types: tet4, tet10, hex8, hex20, tri3, tri6, quad4, quad8.
 
         Returns:
-            New Mesh instance containing the extracted mesh.
+            New Mesh instance containing the extracted mesh and physical groups.
 
         Raises:
             MeshError: If no suitable elements found or mesh not generated.
@@ -392,8 +428,13 @@ class Mesh:
             gmsh.model.add("box")
 
             # Create geometry
-            gmsh.model.occ.addBox(0, 0, 0, 1, 1, 1)
+            box = gmsh.model.occ.addBox(0, 0, 0, 1, 1, 1)
             gmsh.model.occ.synchronize()
+
+            # Define physical groups for boundaries
+            surfaces = gmsh.model.getBoundary([(3, box)], oriented=False)
+            bottom = [s for s in surfaces if abs(gmsh.model.getBoundingBox(2, s[1])[2]) < 1e-6]
+            gmsh.model.addPhysicalGroup(2, [s[1] for s in bottom], name="fixed")
 
             # Generate mesh
             gmsh.model.mesh.generate(3)
@@ -401,6 +442,10 @@ class Mesh:
             # Extract to mops
             from mops import Mesh
             mesh = Mesh.from_gmsh(gmsh.model)
+
+            # Access physical groups
+            fixed = mesh.get_physical_group("fixed")
+            print(f"Fixed boundary has {len(fixed.node_indices)} nodes")
 
             gmsh.finalize()
         """
@@ -421,11 +466,20 @@ class Mesh:
             )
 
         # Build node tag to index mapping (Gmsh tags are 1-based and may have gaps)
-        tag_to_idx = {tag: idx for idx, tag in enumerate(node_tags)}
+        tag_to_idx = {int(tag): idx for idx, tag in enumerate(node_tags)}
         n_nodes = len(node_tags)
 
         # Reshape coordinates to Nx3
         nodes = np.array(node_coords, dtype=np.float64).reshape(n_nodes, 3)
+
+        # Get all elements once for both element extraction and physical group mapping
+        all_element_types, all_element_tags, all_node_tags_per_elem = model.mesh.getElements()
+
+        # Build element tag to index mapping
+        # We need to map Gmsh element tags to our 0-based element indices
+        # Gmsh element tags are unique across all element types
+        elem_tag_to_idx: dict[int, int] = {}
+        final_gmsh_type_code: int | None = None
 
         # Determine which element type to extract
         if element_type is not None:
@@ -447,26 +501,25 @@ class Mesh:
             if gmsh_type_code is None:
                 raise MeshError(f"Cannot map element type '{target_type}' to Gmsh code")
 
-            element_types, element_tags, node_tags_per_elem = model.mesh.getElements()
-
             # Find the matching element type
             found = False
-            for i, etype in enumerate(element_types):
+            for i, etype in enumerate(all_element_types):
                 if etype == gmsh_type_code:
-                    elem_nodes = node_tags_per_elem[i]
+                    elem_nodes = all_node_tags_per_elem[i]
+                    elem_tags = all_element_tags[i]
                     found = True
                     break
 
             if not found:
                 raise MeshError(
                     f"No {target_type} elements found in Gmsh model. "
-                    f"Available element types: {[GMSH_ELEMENT_TYPES.get(t, ('unknown', 0))[0] for t in element_types]}"
+                    f"Available element types: {[GMSH_ELEMENT_TYPES.get(t, ('unknown', 0))[0] for t in all_element_types]}"
                 )
+
+            final_gmsh_type_code = gmsh_type_code
 
         else:
             # Auto-detect: prefer 3D elements, then 2D
-            element_types, element_tags, node_tags_per_elem = model.mesh.getElements()
-
             # Priority order: 3D tetrahedral, 3D hex, 2D tri, 2D quad
             priority_order = [4, 11, 5, 12, 2, 9, 3, 10]  # tet4, tet10, hex8, hex20, tri3, tri6, quad4, quad8
 
@@ -475,7 +528,7 @@ class Mesh:
             selected_gmsh_code = None
 
             for ptype in priority_order:
-                for i, etype in enumerate(element_types):
+                for i, etype in enumerate(all_element_types):
                     if etype == ptype:
                         selected_type = GMSH_ELEMENT_TYPES[ptype][0]
                         selected_idx = i
@@ -486,7 +539,7 @@ class Mesh:
 
             if selected_type is None:
                 # Try to find any supported element type
-                for i, etype in enumerate(element_types):
+                for i, etype in enumerate(all_element_types):
                     if etype in GMSH_ELEMENT_TYPES:
                         type_name, _ = GMSH_ELEMENT_TYPES[etype]
                         if type_name in SUPPORTED_ELEMENT_TYPES:
@@ -498,7 +551,7 @@ class Mesh:
             if selected_type is None:
                 available = [
                     GMSH_ELEMENT_TYPES.get(t, (f"gmsh_{t}", 0))[0]
-                    for t in element_types
+                    for t in all_element_types
                 ]
                 raise MeshError(
                     f"No supported element types found in Gmsh model. "
@@ -506,11 +559,17 @@ class Mesh:
                 )
 
             target_type = selected_type
-            elem_nodes = node_tags_per_elem[selected_idx]
+            elem_nodes = all_node_tags_per_elem[selected_idx]
+            elem_tags = all_element_tags[selected_idx]
+            final_gmsh_type_code = selected_gmsh_code
 
         # Get number of nodes per element
-        n_nodes_per_elem = GMSH_ELEMENT_TYPES[gmsh_type_code if element_type else selected_gmsh_code][1]
+        n_nodes_per_elem = GMSH_ELEMENT_TYPES[final_gmsh_type_code][1]
         n_elements = len(elem_nodes) // n_nodes_per_elem
+
+        # Build element tag to 0-based index mapping for primary elements
+        for i, tag in enumerate(elem_tags):
+            elem_tag_to_idx[int(tag)] = i
 
         # Convert Gmsh node tags to 0-based indices
         elements = np.zeros((n_elements, n_nodes_per_elem), dtype=np.int64)
@@ -519,7 +578,68 @@ class Mesh:
                 gmsh_tag = int(elem_nodes[i * n_nodes_per_elem + j])
                 elements[i, j] = tag_to_idx[gmsh_tag]
 
-        return cls.from_arrays(nodes, elements, target_type)
+        # Extract physical groups
+        physical_groups: dict[str, PhysicalGroup] = {}
+
+        try:
+            # Get all physical groups (returns list of (dim, tag) tuples)
+            phys_groups = model.getPhysicalGroups()
+
+            for dim, phys_tag in phys_groups:
+                # Get the name of this physical group
+                name = model.getPhysicalName(dim, phys_tag)
+                if not name:
+                    # Generate a name if none provided (use dimension and tag)
+                    name = f"dim{dim}_tag{phys_tag}"
+
+                # Get entities (surfaces, volumes, etc.) in this physical group
+                entities = model.getEntitiesForPhysicalGroup(dim, phys_tag)
+
+                # Collect node indices
+                node_indices_set: set[int] = set()
+                element_indices_set: set[int] = set()
+
+                for entity_tag in entities:
+                    # Get nodes for this entity
+                    try:
+                        entity_node_tags, _, _ = model.mesh.getNodes(dim, entity_tag)
+                        for ntag in entity_node_tags:
+                            if int(ntag) in tag_to_idx:
+                                node_indices_set.add(tag_to_idx[int(ntag)])
+                    except Exception:
+                        # Entity might not have nodes, continue
+                        pass
+
+                    # Get elements for this entity
+                    # Only include elements that match our target element type
+                    try:
+                        ent_elem_types, ent_elem_tags, _ = model.mesh.getElements(dim, entity_tag)
+                        for i, etype in enumerate(ent_elem_types):
+                            if etype == final_gmsh_type_code:
+                                for etag in ent_elem_tags[i]:
+                                    if int(etag) in elem_tag_to_idx:
+                                        element_indices_set.add(elem_tag_to_idx[int(etag)])
+                    except Exception:
+                        # Entity might not have elements, continue
+                        pass
+
+                # Create the physical group
+                physical_groups[name] = PhysicalGroup(
+                    name=name,
+                    dimension=dim,
+                    tag=phys_tag,
+                    node_indices=sorted(node_indices_set),
+                    element_indices=sorted(element_indices_set),
+                )
+
+        except Exception:
+            # If physical group extraction fails, continue with empty groups
+            # This maintains backwards compatibility with meshes without physical groups
+            pass
+
+        # Create mesh with physical groups
+        mesh = cls(nodes, elements, target_type, physical_groups=physical_groups)
+        return mesh
 
     @property
     def n_nodes(self) -> int:
@@ -550,6 +670,57 @@ class Mesh:
     def _core(self) -> _CoreMesh:
         """Access the underlying Rust Mesh (internal use only)."""
         return self._inner
+
+    @property
+    def physical_groups(self) -> dict[str, PhysicalGroup]:
+        """Physical groups extracted from Gmsh.
+
+        Returns a dictionary mapping group names to PhysicalGroup objects.
+        Empty dict if mesh was not created from Gmsh or if no physical groups
+        were defined in the Gmsh model.
+
+        Example::
+
+            mesh = Mesh.from_gmsh(gmsh.model)
+            for name, group in mesh.physical_groups.items():
+                print(f"{name}: {len(group.node_indices)} nodes")
+        """
+        return self._physical_groups
+
+    def get_physical_group(self, name: str) -> PhysicalGroup:
+        """Get a physical group by name.
+
+        Args:
+            name: Name of the physical group.
+
+        Returns:
+            PhysicalGroup object containing node and element indices.
+
+        Raises:
+            KeyError: If no physical group with this name exists.
+
+        Example::
+
+            mesh = Mesh.from_gmsh(gmsh.model)
+            fixed_face = mesh.get_physical_group("fixed")
+            # Use node indices for boundary conditions
+            fixed_nodes = fixed_face.node_indices
+        """
+        if name not in self._physical_groups:
+            available = list(self._physical_groups.keys())
+            raise KeyError(
+                f"Unknown physical group: '{name}'. "
+                f"Available groups: {available}"
+            )
+        return self._physical_groups[name]
+
+    def list_physical_groups(self) -> list[str]:
+        """List names of all physical groups.
+
+        Returns:
+            List of physical group names.
+        """
+        return list(self._physical_groups.keys())
 
     def plot(
         self,

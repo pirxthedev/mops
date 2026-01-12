@@ -256,6 +256,7 @@ class NodeQuery(Query):
     _in_box: tuple[tuple[float, float, float], tuple[float, float, float]] | None = None
     _near_line: tuple[tuple[float, float, float], tuple[float, float, float], float] | None = None
     _on_elements: "ElementQuery | None" = None
+    _physical_group: str | None = None
 
     def and_where(self, **kwargs: Any) -> NodeQuery:
         """Intersect with additional predicate."""
@@ -289,6 +290,18 @@ class NodeQuery(Query):
                     "Use the appropriate query type (Nodes, Elements, or Faces)."
                 )
             return component_query.evaluate(mesh, components)
+
+        # Handle physical group query - look up nodes from mesh's physical groups
+        if self._physical_group is not None:
+            # Import here to avoid circular import
+            from mops.mesh import Mesh as PythonMesh
+            if not isinstance(mesh, PythonMesh):
+                raise TypeError(
+                    f"Physical group queries require a Python Mesh object with physical groups. "
+                    f"Got: {type(mesh)}"
+                )
+            group = mesh.get_physical_group(self._physical_group)
+            return np.array(group.node_indices, dtype=np.int64)
 
         n_nodes = mesh.n_nodes
 
@@ -421,6 +434,8 @@ class NodeQuery(Query):
     def __repr__(self) -> str:
         if self._component_name is not None:
             return f"Nodes.in_component('{self._component_name}')"
+        if self._physical_group is not None:
+            return f"Nodes.from_physical_group('{self._physical_group}')"
         if self._all:
             return "Nodes.all()"
         if self._near_point is not None:
@@ -650,6 +665,44 @@ class Nodes:
         return NodeQuery(_near_line=(start, end, tol))
 
     @classmethod
+    def from_physical_group(cls, name: str) -> NodeQuery:
+        """Select nodes from a Gmsh physical group.
+
+        Physical groups are named collections of entities defined in Gmsh.
+        When a mesh is imported from Gmsh via Mesh.from_gmsh(), physical
+        groups are extracted and stored in the mesh.
+
+        This method provides a convenient way to apply boundary conditions
+        to named surfaces or regions without relying on geometric queries.
+
+        Args:
+            name: Name of the physical group (as defined in Gmsh)
+
+        Returns:
+            NodeQuery selecting all nodes in the physical group
+
+        Raises:
+            KeyError: If the physical group name is not found in the mesh
+
+        Example::
+
+            # In Gmsh, define physical groups:
+            # gmsh.model.addPhysicalGroup(2, [surface_tags], name="fixed")
+            # gmsh.model.addPhysicalGroup(2, [surface_tags], name="loaded")
+
+            mesh = Mesh.from_gmsh(gmsh.model)
+
+            # Use physical groups for boundary conditions
+            model = (
+                Model(mesh, materials={"steel": steel})
+                .assign(Elements.all(), material="steel")
+                .constrain(Nodes.from_physical_group("fixed"), dofs=["ux", "uy", "uz"])
+                .load(Nodes.from_physical_group("loaded"), Force(fy=-1000))
+            )
+        """
+        return NodeQuery(_physical_group=name)
+
+    @classmethod
     def on_elements(cls, element_query: "ElementQuery") -> NodeQuery:
         """Select nodes on selected elements (like APDL NSLE).
 
@@ -683,6 +736,7 @@ class ElementQuery(Query):
     _component_name: str | None = None
     _attached_to: "NodeQuery | None" = None
     _touching: "NodeQuery | None" = None
+    _physical_group: str | None = None
 
     def and_where(self, **kwargs: Any) -> ElementQuery:
         """Intersect with additional predicate."""
@@ -716,6 +770,18 @@ class ElementQuery(Query):
                     "Use the appropriate query type (Nodes, Elements, or Faces)."
                 )
             return component_query.evaluate(mesh, components)
+
+        # Handle physical group query - look up elements from mesh's physical groups
+        if self._physical_group is not None:
+            # Import here to avoid circular import
+            from mops.mesh import Mesh as PythonMesh
+            if not isinstance(mesh, PythonMesh):
+                raise TypeError(
+                    f"Physical group queries require a Python Mesh object with physical groups. "
+                    f"Got: {type(mesh)}"
+                )
+            group = mesh.get_physical_group(self._physical_group)
+            return np.array(group.element_indices, dtype=np.int64)
 
         # Get element connectivity from mesh
         # Handle both Python Mesh wrapper and raw Rust mesh
@@ -774,6 +840,8 @@ class ElementQuery(Query):
             return "Elements.all()"
         if self._component_name is not None:
             return f"Elements.in_component('{self._component_name}')"
+        if self._physical_group is not None:
+            return f"Elements.from_physical_group('{self._physical_group}')"
         if self._attached_to is not None:
             return f"Elements.attached_to({self._attached_to})"
         if self._touching is not None:
@@ -911,6 +979,43 @@ class Elements:
             nearby = Elements.touching(Nodes.near_point((50, 50, 50), tol=5))
         """
         return ElementQuery(_touching=node_query)
+
+    @classmethod
+    def from_physical_group(cls, name: str) -> ElementQuery:
+        """Select elements from a Gmsh physical group.
+
+        Physical groups are named collections of entities defined in Gmsh.
+        When a mesh is imported from Gmsh via Mesh.from_gmsh(), physical
+        groups are extracted and stored in the mesh.
+
+        This method provides a convenient way to assign materials to named
+        volumes without relying on geometric queries.
+
+        Args:
+            name: Name of the physical group (as defined in Gmsh)
+
+        Returns:
+            ElementQuery selecting all elements in the physical group
+
+        Raises:
+            KeyError: If the physical group name is not found in the mesh
+
+        Example::
+
+            # In Gmsh, define physical groups for volumes:
+            # gmsh.model.addPhysicalGroup(3, [volume_tags], name="bracket")
+            # gmsh.model.addPhysicalGroup(3, [volume_tags], name="bolt")
+
+            mesh = Mesh.from_gmsh(gmsh.model)
+
+            # Use physical groups for material assignment
+            model = (
+                Model(mesh, materials={"steel": steel, "titanium": titanium})
+                .assign(Elements.from_physical_group("bracket"), material="steel")
+                .assign(Elements.from_physical_group("bolt"), material="titanium")
+            )
+        """
+        return ElementQuery(_physical_group=name)
 
 
 @dataclass

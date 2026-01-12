@@ -529,3 +529,238 @@ class TestMeshElements:
 
         assert result.shape == (2, 4)
         np.testing.assert_array_equal(result, elements)
+
+
+class TestPhysicalGroups:
+    """Tests for Gmsh physical groups extraction."""
+
+    @pytest.fixture
+    def gmsh_initialized(self):
+        """Initialize and finalize gmsh for tests."""
+        gmsh = pytest.importorskip("gmsh")
+        gmsh.initialize()
+        gmsh.option.setNumber("General.Terminal", 0)
+        yield gmsh
+        gmsh.finalize()
+
+    def test_mesh_with_no_physical_groups(self, gmsh_initialized):
+        """Mesh without physical groups has empty physical_groups."""
+        gmsh = gmsh_initialized
+        gmsh.model.add("box")
+        gmsh.model.occ.addBox(0, 0, 0, 1, 1, 1)
+        gmsh.model.occ.synchronize()
+        gmsh.option.setNumber("Mesh.ElementOrder", 1)
+        gmsh.model.mesh.generate(3)
+
+        mesh = Mesh.from_gmsh(gmsh.model)
+
+        assert mesh.physical_groups == {}
+        assert mesh.list_physical_groups() == []
+
+    def test_physical_group_surface(self, gmsh_initialized):
+        """Extract physical group from surface."""
+        gmsh = gmsh_initialized
+        gmsh.model.add("box_with_groups")
+        box = gmsh.model.occ.addBox(0, 0, 0, 1, 1, 1)
+        gmsh.model.occ.synchronize()
+
+        # Get all surfaces of the box
+        surfaces = gmsh.model.getBoundary([(3, box)], oriented=False, combined=False)
+        surface_tags = [s[1] for s in surfaces]
+
+        # Find the surface at z=0 (bottom)
+        bottom_surfaces = []
+        for tag in surface_tags:
+            xmin, ymin, zmin, xmax, ymax, zmax = gmsh.model.getBoundingBox(2, tag)
+            if abs(zmin) < 1e-6 and abs(zmax) < 1e-6:
+                bottom_surfaces.append(tag)
+
+        assert len(bottom_surfaces) > 0, "Should have a bottom surface"
+
+        # Define physical group for bottom surface
+        gmsh.model.addPhysicalGroup(2, bottom_surfaces, name="bottom_fixed")
+
+        gmsh.option.setNumber("Mesh.ElementOrder", 1)
+        gmsh.model.mesh.generate(3)
+
+        mesh = Mesh.from_gmsh(gmsh.model)
+
+        # Check physical group was extracted
+        assert "bottom_fixed" in mesh.physical_groups
+        group = mesh.get_physical_group("bottom_fixed")
+
+        assert group.name == "bottom_fixed"
+        assert group.dimension == 2  # Surface dimension
+        assert len(group.node_indices) > 0  # Should have nodes
+
+        # Verify all nodes are at z=0
+        coords = mesh.coords
+        for node_idx in group.node_indices:
+            assert abs(coords[node_idx, 2]) < 1e-6, "Bottom nodes should have z=0"
+
+    def test_physical_group_volume(self, gmsh_initialized):
+        """Extract physical group from volume."""
+        gmsh = gmsh_initialized
+        gmsh.model.add("box_volume")
+        box = gmsh.model.occ.addBox(0, 0, 0, 1, 1, 1)
+        gmsh.model.occ.synchronize()
+
+        # Define physical group for the volume
+        gmsh.model.addPhysicalGroup(3, [box], name="solid")
+
+        gmsh.option.setNumber("Mesh.ElementOrder", 1)
+        gmsh.model.mesh.generate(3)
+
+        mesh = Mesh.from_gmsh(gmsh.model)
+
+        # Check physical group was extracted
+        assert "solid" in mesh.physical_groups
+        group = mesh.get_physical_group("solid")
+
+        assert group.name == "solid"
+        assert group.dimension == 3  # Volume dimension
+        assert len(group.element_indices) > 0  # Should have elements
+        assert len(group.node_indices) > 0  # Should have nodes
+
+        # All elements should be in this group since it's the only volume
+        assert len(group.element_indices) == mesh.n_elements
+
+    def test_multiple_physical_groups(self, gmsh_initialized):
+        """Extract multiple physical groups."""
+        gmsh = gmsh_initialized
+        gmsh.model.add("box_multi")
+        box = gmsh.model.occ.addBox(0, 0, 0, 1, 1, 1)
+        gmsh.model.occ.synchronize()
+
+        surfaces = gmsh.model.getBoundary([(3, box)], oriented=False, combined=False)
+        surface_tags = [s[1] for s in surfaces]
+
+        # Find bottom (z=0) and top (z=1) surfaces
+        bottom_tags = []
+        top_tags = []
+        for tag in surface_tags:
+            xmin, ymin, zmin, xmax, ymax, zmax = gmsh.model.getBoundingBox(2, tag)
+            if abs(zmin) < 1e-6 and abs(zmax) < 1e-6:
+                bottom_tags.append(tag)
+            if abs(zmin - 1.0) < 1e-6 and abs(zmax - 1.0) < 1e-6:
+                top_tags.append(tag)
+
+        # Define physical groups
+        if bottom_tags:
+            gmsh.model.addPhysicalGroup(2, bottom_tags, name="fixed")
+        if top_tags:
+            gmsh.model.addPhysicalGroup(2, top_tags, name="loaded")
+        gmsh.model.addPhysicalGroup(3, [box], name="material1")
+
+        gmsh.option.setNumber("Mesh.ElementOrder", 1)
+        gmsh.model.mesh.generate(3)
+
+        mesh = Mesh.from_gmsh(gmsh.model)
+
+        # Check all groups
+        group_names = mesh.list_physical_groups()
+        assert "fixed" in group_names
+        assert "loaded" in group_names
+        assert "material1" in group_names
+
+        # Verify bottom nodes are at z=0
+        fixed_group = mesh.get_physical_group("fixed")
+        coords = mesh.coords
+        for node_idx in fixed_group.node_indices:
+            assert abs(coords[node_idx, 2]) < 1e-6
+
+        # Verify top nodes are at z=1
+        loaded_group = mesh.get_physical_group("loaded")
+        for node_idx in loaded_group.node_indices:
+            assert abs(coords[node_idx, 2] - 1.0) < 1e-6
+
+    def test_get_physical_group_not_found(self, gmsh_initialized):
+        """KeyError when physical group not found."""
+        gmsh = gmsh_initialized
+        gmsh.model.add("box")
+        gmsh.model.occ.addBox(0, 0, 0, 1, 1, 1)
+        gmsh.model.occ.synchronize()
+        gmsh.model.mesh.generate(3)
+
+        mesh = Mesh.from_gmsh(gmsh.model)
+
+        with pytest.raises(KeyError, match="Unknown physical group"):
+            mesh.get_physical_group("nonexistent")
+
+    def test_physical_group_nodes_query(self, gmsh_initialized):
+        """Nodes.from_physical_group works with physical groups."""
+        from mops import Nodes
+
+        gmsh = gmsh_initialized
+        gmsh.model.add("box")
+        box = gmsh.model.occ.addBox(0, 0, 0, 1, 1, 1)
+        gmsh.model.occ.synchronize()
+
+        surfaces = gmsh.model.getBoundary([(3, box)], oriented=False, combined=False)
+        surface_tags = [s[1] for s in surfaces]
+
+        # Find bottom surface
+        bottom_tags = []
+        for tag in surface_tags:
+            xmin, ymin, zmin, xmax, ymax, zmax = gmsh.model.getBoundingBox(2, tag)
+            if abs(zmin) < 1e-6 and abs(zmax) < 1e-6:
+                bottom_tags.append(tag)
+
+        if bottom_tags:
+            gmsh.model.addPhysicalGroup(2, bottom_tags, name="fixed")
+
+        gmsh.option.setNumber("Mesh.ElementOrder", 1)
+        gmsh.model.mesh.generate(3)
+
+        mesh = Mesh.from_gmsh(gmsh.model)
+
+        # Use Nodes.from_physical_group query
+        query = Nodes.from_physical_group("fixed")
+        node_indices = query.evaluate(mesh)
+
+        # Check we got nodes
+        assert len(node_indices) > 0
+
+        # Verify all nodes are at z=0
+        coords = mesh.coords
+        for node_idx in node_indices:
+            assert abs(coords[node_idx, 2]) < 1e-6
+
+    def test_physical_group_elements_query(self, gmsh_initialized):
+        """Elements.from_physical_group works with physical groups."""
+        from mops import Elements
+
+        gmsh = gmsh_initialized
+        gmsh.model.add("box")
+        box = gmsh.model.occ.addBox(0, 0, 0, 1, 1, 1)
+        gmsh.model.occ.synchronize()
+
+        # Define physical group for volume
+        gmsh.model.addPhysicalGroup(3, [box], name="solid")
+
+        gmsh.option.setNumber("Mesh.ElementOrder", 1)
+        gmsh.model.mesh.generate(3)
+
+        mesh = Mesh.from_gmsh(gmsh.model)
+
+        # Use Elements.from_physical_group query
+        query = Elements.from_physical_group("solid")
+        element_indices = query.evaluate(mesh)
+
+        # All elements should be in the "solid" group
+        assert len(element_indices) == mesh.n_elements
+
+    def test_from_arrays_no_physical_groups(self):
+        """Mesh from arrays has empty physical_groups."""
+        nodes = np.array([
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+        ], dtype=np.float64)
+        elements = np.array([[0, 1, 2, 3]], dtype=np.int64)
+
+        mesh = Mesh.from_arrays(nodes, elements, "tet4")
+
+        assert mesh.physical_groups == {}
+        assert mesh.list_physical_groups() == []
