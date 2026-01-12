@@ -1,8 +1,9 @@
 # Hex8 Shear Locking Remediation
 
 **Date:** 2026-01-12
-**Status:** Draft
+**Status:** Research Complete
 **Depends on:** [Element Library Design](2026-01-10-element-library-design.md)
+**Related Issue:** mops-cb0
 
 ## Overview
 
@@ -269,16 +270,72 @@ For reduced integration variants:
 - No additional storage required for SRI or B-bar
 - Same element connectivity and DOF count
 
+## Detailed Technical Formulations
+
+### Static Condensation for Enhanced/Incompatible Modes
+
+For EAS or incompatible modes methods, internal DOFs (α) are condensed at element level:
+
+```
+System with enhanced modes:
+[K_uu  K_uα] [u]   [f]
+[K_αu  K_αα] [α] = [0]
+
+Condensed stiffness:
+K_el = K_uu - K_uα * (K_αα)^(-1) * K_αu
+```
+
+This preserves standard element connectivity while capturing enhanced strain behavior.
+
+### Nine Enhanced Modes for Hex8 (Wilson-Taylor Reference)
+
+The classical Wilson element adds 9 internal displacement modes (3 per direction):
+```
+Enhanced displacement gradient:
+∂u_i/∂x_j += Σ_k [J(0)/J(ξ)] * α_i^(k) * δ_km * ξ_k * (∂ξ_m/∂x_j)
+
+where:
+- J(0) = Jacobian at element center
+- J(ξ) = Jacobian at integration point
+- α_i^(k) = internal DOFs (unknown)
+- ξ_k = natural coordinates
+```
+
+This modification requires computing volume average of shape derivatives before stiffness assembly.
+
+### B-matrix Decomposition for SRI
+
+Volumetric projection:
+```
+m = [1, 1, 1, 0, 0, 0]^T  (volumetric selector)
+I_vol = (1/3) * m * m^T   (volumetric projector, 6×6)
+I_dev = I - I_vol         (deviatoric projector, 6×6)
+
+B_vol = I_vol * B
+B_dev = I_dev * B
+
+Stiffness split:
+K_vol = Σ_center B_vol^T * D * B_vol * |J| * w
+K_dev = Σ_8pt B_dev^T * D * B_dev * |J| * w
+K = K_vol + K_dev
+```
+
 ## References
 
 1. Hughes, T.J.R. "The Finite Element Method" (2000), Ch. 4
-2. Simo, J.C. and Rifai, M.S. "A class of mixed assumed strain methods and the method of incompatible modes" (1990)
+2. Simo, J.C. and Rifai, M.S. "A class of mixed assumed strain methods and the method of incompatible modes" (1990), Int J Numer Meth Eng 29:1595-1638
 3. Belytschko, T. et al. "Nonlinear Finite Elements for Continua and Structures" (2014)
-4. NAFEMS Benchmark Challenge: LE10 Thick Plate
-5. ABAQUS Theory Manual: Section 4.5 (Solid Elements)
+4. Wilson, E.L., Taylor, R.L., Doherty, W.P., Ghaboussi, J. "Incompatible displacement models" (1973), In: Fenves SJ (ed) Numerical and computer methods in structural mechanics. Academic Press, pp 43-57
+5. Simo, J.C., Armero, F., Taylor, R.L. "Improved versions of assumed enhanced strain tri-linear elements for 3D finite deformation problems" (1993), Comput Methods Appl Mech Eng 110:359-386
+6. NAFEMS Benchmark Challenge: LE10 Thick Plate
+7. ABAQUS Theory Manual: Section 4.5 (Solid Elements)
+8. A.F. Bower "Applied Mechanics of Solids", Ch. 8.6 - Special Elements (http://solidmechanics.org/Text/Chapter8_6/Chapter8_6.php)
 
 ## Open Questions
 
 1. Should SRI be the default for Hex8, or require explicit selection?
+   - **Recommendation:** Keep full integration as default for safety; SRI should be opt-in via Hex8SRI
 2. Need stress recovery strategy for SRI (stress at 1 point or extrapolate from 8)?
+   - **Recommendation:** Compute stresses at all 8 Gauss points, same as full integration
 3. How to handle mixed meshes (Hex8 + Hex8SRI in same model)?
+   - **Recommendation:** Support mixed meshes; stiffness assembly treats each element type independently
