@@ -234,8 +234,8 @@ For reduced integration variants:
 - [x] Unit tests (patch tests, symmetry)
 - [x] Add to Python bindings
 - [x] Cook's membrane verification test (tests/verification/test_cooks_membrane.py)
-- [ ] Cantilever beam verification test
-- [ ] NAFEMS LE10 comparison test
+- [x] Cantilever beam verification test (tests/verification/test_cantilever.py::TestCantileverHex8SRI)
+- [x] NAFEMS LE10 comparison test (tests/verification/test_nafems_le10.py::TestNAFEMSLE10Hex8SRI)
 
 ### Phase 2: B-bar Formulation
 

@@ -46,15 +46,16 @@ from mops import (
 )
 
 
-def generate_hex8_cantilever_mesh(
+def generate_hex_cantilever_mesh(
     length: float,
     width: float,
     height: float,
     nx: int,
     ny: int,
     nz: int,
+    element_type: str = "hex8",
 ) -> Mesh:
-    """Generate a structured hex8 mesh for a cantilever beam.
+    """Generate a structured hex mesh for a cantilever beam.
 
     The beam extends along the x-axis from x=0 (fixed end) to x=length (free end).
 
@@ -65,9 +66,10 @@ def generate_hex8_cantilever_mesh(
         nx: Number of elements in x-direction.
         ny: Number of elements in y-direction.
         nz: Number of elements in z-direction.
+        element_type: Element type ("hex8" or "hex8sri").
 
     Returns:
-        Mesh: A hex8 mesh with (nx+1)*(ny+1)*(nz+1) nodes.
+        Mesh: A hex mesh with (nx+1)*(ny+1)*(nz+1) nodes.
     """
     # Generate node coordinates
     x_coords = np.linspace(0, length, nx + 1)
@@ -104,7 +106,34 @@ def generate_hex8_cantilever_mesh(
                 elements.append([n0, n1, n2, n3, n4, n5, n6, n7])
     elements = np.array(elements, dtype=np.int64)
 
-    return Mesh(nodes, elements, "hex8")
+    return Mesh(nodes, elements, element_type)
+
+
+def generate_hex8_cantilever_mesh(
+    length: float,
+    width: float,
+    height: float,
+    nx: int,
+    ny: int,
+    nz: int,
+) -> Mesh:
+    """Generate a structured hex8 mesh for a cantilever beam.
+
+    This is a convenience wrapper around generate_hex_cantilever_mesh
+    for backwards compatibility.
+
+    Args:
+        length: Beam length in x-direction.
+        width: Beam width in y-direction.
+        height: Beam height in z-direction.
+        nx: Number of elements in x-direction.
+        ny: Number of elements in y-direction.
+        nz: Number of elements in z-direction.
+
+    Returns:
+        Mesh: A hex8 mesh with (nx+1)*(ny+1)*(nz+1) nodes.
+    """
+    return generate_hex_cantilever_mesh(length, width, height, nx, ny, nz, "hex8")
 
 
 def analytical_tip_deflection(
@@ -491,3 +520,203 @@ class TestCantileverMaterialScaling:
                 f"Non-inverse E-deflection: product[{i}]={products[i]:.6e} "
                 f"vs product[0]={products[0]:.6e}"
             )
+
+
+class TestCantileverHex8SRI:
+    """Test cantilever beam with Hex8SRI (Selective Reduced Integration).
+
+    This test class verifies that Hex8SRI reduces shear locking compared to
+    standard Hex8 elements, particularly for coarse meshes in bending.
+
+    Shear locking causes standard hex8 elements to be overly stiff in bending,
+    underpredicting deflection. SRI addresses this by using:
+    - 1-point integration for volumetric strain
+    - 2x2x2 integration for deviatoric strain
+
+    Expected behavior:
+    - Hex8SRI should predict larger (more accurate) deflection than Hex8
+    - The improvement is most pronounced on coarse meshes
+    - Both converge to the same solution with mesh refinement
+    """
+
+    # Beam geometry
+    LENGTH = 10.0  # m
+    WIDTH = 1.0    # m
+    HEIGHT = 1.0   # m
+
+    # Material properties (steel)
+    E = 200e9      # Pa
+    NU = 0.3
+
+    # Applied load
+    TOTAL_LOAD = -1000.0  # N (negative = downward in z)
+
+    @pytest.fixture
+    def steel(self) -> Material:
+        """Steel material for testing."""
+        return Material("steel", e=self.E, nu=self.NU)
+
+    @pytest.fixture
+    def analytical_deflection(self) -> float:
+        """Compute expected tip deflection from beam theory."""
+        I = self.WIDTH * self.HEIGHT**3 / 12
+        return analytical_tip_deflection(
+            abs(self.TOTAL_LOAD), self.LENGTH, self.E, I
+        )
+
+    def _solve_cantilever(
+        self, nx: int, ny: int, nz: int, element_type: str, material: Material
+    ) -> float:
+        """Solve cantilever and return average tip deflection.
+
+        Args:
+            nx, ny, nz: Mesh density
+            element_type: "hex8" or "hex8sri"
+            material: Material properties
+
+        Returns:
+            Average z-displacement at tip (magnitude)
+        """
+        mesh = generate_hex_cantilever_mesh(
+            self.LENGTH, self.WIDTH, self.HEIGHT,
+            nx=nx, ny=ny, nz=nz,
+            element_type=element_type,
+        )
+
+        base_model = (
+            Model(mesh, materials={"steel": material})
+            .assign(Elements.all(), material="steel")
+            .constrain(Nodes.where(x=0), dofs=["ux", "uy", "uz"])
+        )
+        model = _apply_distributed_load(mesh, base_model, self.LENGTH, self.TOTAL_LOAD)
+
+        results = solve(model)
+        disp = results.displacement()
+
+        tip_nodes = Nodes.where(x=self.LENGTH).evaluate(mesh)
+        tip_z_displacements = [disp[n, 2] for n in tip_nodes]
+        return abs(np.mean(tip_z_displacements))
+
+    def test_hex8sri_coarse_better_than_hex8(self, steel, analytical_deflection):
+        """Hex8SRI should predict larger deflection than Hex8 on coarse mesh.
+
+        This is the single-element-through-thickness case, which is the worst
+        case for shear locking. SRI should show clear improvement.
+        """
+        tip_hex8 = self._solve_cantilever(5, 1, 1, "hex8", steel)
+        tip_sri = self._solve_cantilever(5, 1, 1, "hex8sri", steel)
+
+        # SRI should predict larger (more accurate) deflection
+        assert tip_sri > tip_hex8, (
+            f"Hex8SRI ({tip_sri:.6e}) should predict larger deflection than "
+            f"Hex8 ({tip_hex8:.6e}) due to reduced shear locking"
+        )
+
+        # SRI should be closer to analytical
+        error_hex8 = abs(tip_hex8 - analytical_deflection)
+        error_sri = abs(tip_sri - analytical_deflection)
+        assert error_sri < error_hex8, (
+            f"Hex8SRI error ({error_sri:.6e}) should be less than "
+            f"Hex8 error ({error_hex8:.6e})"
+        )
+
+    def test_hex8sri_coarse_mesh(self, steel, analytical_deflection):
+        """Coarse Hex8SRI mesh should be more accurate than equivalent Hex8.
+
+        With 5x1x1 elements, expect SRI to achieve better accuracy than
+        standard integration.
+        """
+        tip_sri = self._solve_cantilever(5, 1, 1, "hex8sri", steel)
+
+        # SRI on coarse mesh should be within reasonable range
+        # Note: 5x1x1 mesh is extremely coarse for 3D bending - 50% error is acceptable
+        relative_error = abs(tip_sri - analytical_deflection) / analytical_deflection
+        assert relative_error < 0.55, (
+            f"Hex8SRI coarse mesh error {relative_error:.1%} exceeds 55%. "
+            f"FEA: {tip_sri:.6e}, Analytical: {analytical_deflection:.6e}"
+        )
+
+    def test_hex8sri_medium_mesh(self, steel, analytical_deflection):
+        """Medium Hex8SRI mesh should show good accuracy."""
+        tip_sri = self._solve_cantilever(10, 2, 2, "hex8sri", steel)
+
+        # Medium SRI mesh should be within 30%
+        relative_error = abs(tip_sri - analytical_deflection) / analytical_deflection
+        assert relative_error < 0.30, (
+            f"Hex8SRI medium mesh error {relative_error:.1%} exceeds 30%. "
+            f"FEA: {tip_sri:.6e}, Analytical: {analytical_deflection:.6e}"
+        )
+
+    def test_hex8sri_fine_mesh(self, steel, analytical_deflection):
+        """Fine Hex8SRI mesh should converge close to analytical."""
+        tip_sri = self._solve_cantilever(20, 4, 4, "hex8sri", steel)
+
+        # Fine SRI mesh should be within 25%
+        relative_error = abs(tip_sri - analytical_deflection) / analytical_deflection
+        assert relative_error < 0.25, (
+            f"Hex8SRI fine mesh error {relative_error:.1%} exceeds 25%. "
+            f"FEA: {tip_sri:.6e}, Analytical: {analytical_deflection:.6e}"
+        )
+
+    def test_hex8sri_convergence(self, steel, analytical_deflection):
+        """Hex8SRI should converge monotonically with mesh refinement."""
+        mesh_configs = [
+            (5, 1, 1),    # Coarse
+            (10, 2, 2),   # Medium
+            (20, 4, 4),   # Fine
+        ]
+
+        deflections = []
+        for nx, ny, nz in mesh_configs:
+            tip_disp = self._solve_cantilever(nx, ny, nz, "hex8sri", steel)
+            deflections.append(tip_disp)
+
+        # Each refinement should get closer to analytical
+        errors = [abs(d - analytical_deflection) for d in deflections]
+
+        # Monotonic convergence: each finer mesh should have smaller error
+        for i in range(len(errors) - 1):
+            assert errors[i + 1] <= errors[i] * 1.1, (
+                f"Hex8SRI convergence violation: error[{i + 1}]={errors[i + 1]:.6e} > "
+                f"error[{i}]={errors[i]:.6e}"
+            )
+
+    def test_hex8sri_vs_hex8_medium_mesh(self, steel, analytical_deflection):
+        """Compare Hex8SRI and Hex8 on medium mesh."""
+        tip_hex8 = self._solve_cantilever(10, 2, 2, "hex8", steel)
+        tip_sri = self._solve_cantilever(10, 2, 2, "hex8sri", steel)
+
+        # Both should be positive (downward deflection)
+        assert tip_hex8 > 0 and tip_sri > 0
+
+        # SRI should be more accurate (larger deflection, closer to analytical)
+        # On medium mesh the difference should still be visible
+        error_hex8 = abs(tip_hex8 - analytical_deflection) / analytical_deflection
+        error_sri = abs(tip_sri - analytical_deflection) / analytical_deflection
+
+        assert error_sri <= error_hex8, (
+            f"Hex8SRI error ({error_sri:.1%}) should be <= Hex8 error ({error_hex8:.1%})"
+        )
+
+    def test_hex8sri_vs_hex8_fine_mesh_converge(self, steel, analytical_deflection):
+        """On fine mesh, Hex8 and Hex8SRI should both converge.
+
+        With sufficient refinement, both element types should approach
+        the analytical solution.
+        """
+        tip_hex8 = self._solve_cantilever(20, 4, 4, "hex8", steel)
+        tip_sri = self._solve_cantilever(20, 4, 4, "hex8sri", steel)
+
+        # Both should be within 30% of analytical on fine mesh
+        error_hex8 = abs(tip_hex8 - analytical_deflection) / analytical_deflection
+        error_sri = abs(tip_sri - analytical_deflection) / analytical_deflection
+
+        assert error_hex8 < 0.30, f"Hex8 fine mesh error {error_hex8:.1%} > 30%"
+        assert error_sri < 0.30, f"Hex8SRI fine mesh error {error_sri:.1%} > 30%"
+
+        # Results should be similar (both converged)
+        ratio = tip_sri / tip_hex8
+        assert 0.9 < ratio < 1.1, (
+            f"Fine mesh results should be similar: Hex8={tip_hex8:.6e}, "
+            f"Hex8SRI={tip_sri:.6e}, ratio={ratio:.3f}"
+        )

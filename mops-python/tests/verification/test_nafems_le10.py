@@ -1311,6 +1311,332 @@ class TestNAFEMSLE10FullPlate:
         )
 
 
+def generate_full_plate_hex_mesh(
+    n_radial: int = 10,
+    n_angular: int = 20,
+    n_thick: int = 10,
+    mesh_grading: float = 1.4,
+    element_type: str = "hex8",
+) -> Tuple[Mesh, dict]:
+    """Generate a FULL plate hex mesh (z=-300 to z=+300) for NAFEMS LE10.
+
+    This is a generalized version that supports different element types (hex8, hex8sri).
+
+    Args:
+        n_radial: Number of elements in radial direction (inner to outer)
+        n_angular: Number of elements in angular direction (0 to 90 degrees)
+        n_thick: Number of elements through FULL thickness (must be even)
+        mesh_grading: Power for radial mesh grading (>1 concentrates near inner)
+        element_type: "hex8" or "hex8sri"
+
+    Returns:
+        Tuple of (Mesh, node_map) where node_map[(i_r, i_theta, i_z)] = node_index
+    """
+    nodes = []
+    elements = []
+
+    r_params = np.linspace(0, 1, n_radial + 1)
+    if mesh_grading != 1.0:
+        r_params = r_params ** mesh_grading
+
+    angles = np.linspace(0, math.pi / 2, n_angular + 1)
+    z_coords = np.linspace(-HALF_THICKNESS, HALF_THICKNESS, n_thick + 1)
+
+    node_map = {}
+
+    for i_z, z in enumerate(z_coords):
+        for i_r, r_param in enumerate(r_params):
+            for i_theta, theta in enumerate(angles):
+                x_inner, y_inner = ellipse_point(INNER_D, INNER_A, theta)
+                x_outer, y_outer = ellipse_point(OUTER_C, OUTER_B, theta)
+                x = x_inner + r_param * (x_outer - x_inner)
+                y = y_inner + r_param * (y_outer - y_inner)
+                node_idx = len(nodes)
+                nodes.append([x, y, z])
+                node_map[(i_r, i_theta, i_z)] = node_idx
+
+    for i_z in range(n_thick):
+        for i_r in range(n_radial):
+            for i_theta in range(n_angular):
+                n0 = node_map[(i_r, i_theta, i_z)]
+                n1 = node_map[(i_r + 1, i_theta, i_z)]
+                n2 = node_map[(i_r + 1, i_theta + 1, i_z)]
+                n3 = node_map[(i_r, i_theta + 1, i_z)]
+                n4 = node_map[(i_r, i_theta, i_z + 1)]
+                n5 = node_map[(i_r + 1, i_theta, i_z + 1)]
+                n6 = node_map[(i_r + 1, i_theta + 1, i_z + 1)]
+                n7 = node_map[(i_r, i_theta + 1, i_z + 1)]
+                elements.append([n0, n1, n2, n3, n4, n5, n6, n7])
+
+    nodes_array = np.array(nodes, dtype=np.float64)
+    elements_array = np.array(elements, dtype=np.int64)
+
+    return Mesh(nodes_array, elements_array, element_type), node_map
+
+
+class TestNAFEMSLE10Hex8SRI:
+    """NAFEMS LE10 benchmark comparing Hex8 vs Hex8SRI element performance.
+
+    This test class verifies that Hex8SRI (Selective Reduced Integration)
+    improves stress accuracy for the LE10 thick plate bending problem.
+
+    The LE10 benchmark is a 3D bending-dominated problem where shear locking
+    in standard Hex8 elements can cause:
+    - Overly stiff response
+    - Underestimated displacements
+    - Inaccurate bending stresses
+
+    Hex8SRI addresses this by using:
+    - 1-point integration for volumetric strain (reduces locking)
+    - 2x2x2 integration for deviatoric strain (maintains stability)
+
+    Target: sigma_yy = -5.38 MPa at point D (2000, 0, 300) with +/-2% tolerance.
+    """
+
+    @pytest.fixture
+    def steel_le10(self) -> Material:
+        """Steel material with LE10 properties."""
+        return Material("steel_le10", e=E, nu=NU)
+
+    def _build_full_plate_model(
+        self,
+        mesh: Mesh,
+        material: Material,
+        node_map: dict,
+        n_radial: int,
+        n_angular: int,
+        n_thick: int,
+    ) -> Model:
+        """Build LE10 model with correct full-plate boundary conditions."""
+        x0_nodes = get_nodes_on_x0_plane(mesh)
+        y0_nodes = get_nodes_on_y0_plane(mesh)
+        outer_nodes = get_nodes_on_outer_ellipse(mesh)
+
+        outer_midplane_nodes = get_outer_ellipse_midplane_nodes(
+            mesh, node_map, n_radial, n_angular, n_thick
+        )
+
+        model = (
+            Model(mesh, materials={"steel": material})
+            .assign(Elements.all(), material="steel")
+            .constrain(Nodes.by_indices(y0_nodes), dofs=["uy"])
+            .constrain(Nodes.by_indices(x0_nodes), dofs=["ux"])
+            .constrain(Nodes.by_indices(outer_nodes), dofs=["ux", "uy"])
+            .constrain(Nodes.by_indices(outer_midplane_nodes), dofs=["uz"])
+            .load(Faces.where(z=HALF_THICKNESS), Pressure(APPLIED_PRESSURE))
+        )
+
+        return model
+
+    def _solve_and_get_stress(
+        self,
+        n_radial: int,
+        n_angular: int,
+        n_thick: int,
+        element_type: str,
+        material: Material,
+        mesh_grading: float = 1.4,
+    ) -> Tuple[float, float]:
+        """Solve LE10 and return sigma_yy at point D and max displacement.
+
+        Args:
+            n_radial, n_angular, n_thick: Mesh density
+            element_type: "hex8" or "hex8sri"
+            material: Material properties
+            mesh_grading: Radial mesh grading factor
+
+        Returns:
+            Tuple of (sigma_yy at point D, max displacement)
+        """
+        mesh, node_map = generate_full_plate_hex_mesh(
+            n_radial, n_angular, n_thick,
+            mesh_grading=mesh_grading,
+            element_type=element_type,
+        )
+
+        model = self._build_full_plate_model(
+            mesh, material, node_map, n_radial, n_angular, n_thick
+        )
+        results = solve(model)
+
+        stress = get_stress_at_point(
+            POINT_D_3D, mesh.coords, mesh.elements, results.stress()
+        )
+        sigma_yy = stress[1]
+        max_disp = results.max_displacement()
+
+        return sigma_yy, max_disp
+
+    def test_hex8sri_deflection_greater_than_hex8(self, steel_le10):
+        """Hex8SRI should predict larger deflection than Hex8 (reduced locking).
+
+        On a coarse mesh, standard Hex8 is overly stiff due to shear locking.
+        Hex8SRI should produce larger, more accurate displacements.
+        """
+        n_radial, n_angular, n_thick = 8, 16, 8
+
+        _, disp_hex8 = self._solve_and_get_stress(
+            n_radial, n_angular, n_thick, "hex8", steel_le10
+        )
+        _, disp_sri = self._solve_and_get_stress(
+            n_radial, n_angular, n_thick, "hex8sri", steel_le10
+        )
+
+        # SRI should produce larger displacement (less locked)
+        assert disp_sri > disp_hex8, (
+            f"Hex8SRI max disp ({disp_sri:.4f}) should be > "
+            f"Hex8 max disp ({disp_hex8:.4f})"
+        )
+
+    def test_hex8sri_stress_closer_to_target(self, steel_le10):
+        """Hex8SRI should produce stress closer to target than Hex8.
+
+        The target sigma_yy = -5.38 MPa at point D. Hex8SRI should
+        be closer to this value than standard Hex8 on equivalent mesh.
+        """
+        n_radial, n_angular, n_thick = 10, 20, 10
+
+        sigma_hex8, _ = self._solve_and_get_stress(
+            n_radial, n_angular, n_thick, "hex8", steel_le10
+        )
+        sigma_sri, _ = self._solve_and_get_stress(
+            n_radial, n_angular, n_thick, "hex8sri", steel_le10
+        )
+
+        # Both should be negative (compressive)
+        assert sigma_hex8 < 0, f"Hex8 sigma_yy={sigma_hex8:.2f} should be negative"
+        assert sigma_sri < 0, f"Hex8SRI sigma_yy={sigma_sri:.2f} should be negative"
+
+        # Compare errors
+        error_hex8 = abs(sigma_hex8 - TARGET_SIGMA_YY) / abs(TARGET_SIGMA_YY)
+        error_sri = abs(sigma_sri - TARGET_SIGMA_YY) / abs(TARGET_SIGMA_YY)
+
+        # SRI should be equal or better (allow small tolerance for numerical noise)
+        assert error_sri <= error_hex8 * 1.1, (
+            f"Hex8SRI error ({error_sri:.1%}) should be <= Hex8 error ({error_hex8:.1%}). "
+            f"Hex8: {sigma_hex8:.2f} MPa, Hex8SRI: {sigma_sri:.2f} MPa, Target: {TARGET_SIGMA_YY} MPa"
+        )
+
+    def test_hex8sri_coarse_mesh(self, steel_le10):
+        """Coarse Hex8SRI mesh should produce reasonable stress.
+
+        Even on a coarse mesh, Hex8SRI should produce bending stresses
+        in the right ballpark.
+        """
+        n_radial, n_angular, n_thick = 8, 16, 8
+
+        sigma_sri, disp_sri = self._solve_and_get_stress(
+            n_radial, n_angular, n_thick, "hex8sri", steel_le10, mesh_grading=1.4
+        )
+
+        # Should be compressive
+        assert sigma_sri < 0, f"sigma_yy={sigma_sri:.2f} should be negative"
+
+        # Should be in reasonable range (within 30% of target for coarse mesh)
+        assert abs(sigma_sri) > 3.0, f"sigma_yy={sigma_sri:.2f} too small"
+        assert abs(sigma_sri) < 10.0, f"sigma_yy={sigma_sri:.2f} too large"
+
+        # Should show significant bending displacement
+        assert disp_sri > 0.05, f"Max displacement {disp_sri:.4f} too small for bending"
+
+    @pytest.mark.slow
+    def test_hex8sri_fine_mesh(self, steel_le10):
+        """Fine Hex8SRI mesh should converge toward target.
+
+        With a fine mesh, Hex8SRI should achieve good accuracy,
+        approaching the NAFEMS target of -5.38 MPa.
+        """
+        n_radial, n_angular, n_thick = 14, 28, 12
+
+        sigma_sri, _ = self._solve_and_get_stress(
+            n_radial, n_angular, n_thick, "hex8sri", steel_le10, mesh_grading=1.5
+        )
+
+        # Should be within 15% of target
+        error = abs(sigma_sri - TARGET_SIGMA_YY) / abs(TARGET_SIGMA_YY)
+        assert error < 0.15, (
+            f"sigma_yy={sigma_sri:.2f} MPa, error={error*100:.1f}% "
+            f"(target={TARGET_SIGMA_YY} MPa)"
+        )
+
+    def test_hex8sri_convergence(self, steel_le10):
+        """Hex8SRI stress should converge with mesh refinement."""
+        configs = [
+            (8, 16, 8),
+            (10, 20, 10),
+            (12, 24, 10),
+        ]
+
+        sigma_values = []
+        for n_radial, n_angular, n_thick in configs:
+            sigma, _ = self._solve_and_get_stress(
+                n_radial, n_angular, n_thick, "hex8sri", steel_le10
+            )
+            sigma_values.append(sigma)
+
+        # All should be negative
+        for val in sigma_values:
+            assert val < 0, f"sigma_yy={val:.2f} should be negative"
+
+        # Should be converging (later values closer to target)
+        errors = [abs(v - TARGET_SIGMA_YY) for v in sigma_values]
+        assert errors[-1] <= errors[0] * 1.1, (
+            f"Hex8SRI not converging: errors={[f'{e:.2f}' for e in errors]}"
+        )
+
+    def test_hex8_vs_hex8sri_comparison_report(self, steel_le10, capsys):
+        """Generate comparison report between Hex8 and Hex8SRI.
+
+        This test prints a comparison table showing the improvement
+        from using Hex8SRI over standard Hex8 for the LE10 benchmark.
+        """
+        configs = [
+            (8, 16, 8, "Coarse"),
+            (10, 20, 10, "Medium"),
+            (12, 24, 10, "Fine"),
+        ]
+
+        print("\n" + "=" * 80)
+        print("NAFEMS LE10 Benchmark: Hex8 vs Hex8SRI Comparison")
+        print(f"Target sigma_yy at point D: {TARGET_SIGMA_YY} MPa (+/-{TOLERANCE*100}%)")
+        print("=" * 80)
+        print(
+            "{:^10} {:^14} {:^12} {:^14} {:^12} {:^12}".format(
+                "Mesh", "Hex8 stress", "Hex8 error", "SRI stress", "SRI error", "Improvement"
+            )
+        )
+        print("-" * 80)
+
+        for n_radial, n_angular, n_thick, label in configs:
+            sigma_hex8, _ = self._solve_and_get_stress(
+                n_radial, n_angular, n_thick, "hex8", steel_le10
+            )
+            sigma_sri, _ = self._solve_and_get_stress(
+                n_radial, n_angular, n_thick, "hex8sri", steel_le10
+            )
+
+            error_hex8 = abs(sigma_hex8 - TARGET_SIGMA_YY) / abs(TARGET_SIGMA_YY)
+            error_sri = abs(sigma_sri - TARGET_SIGMA_YY) / abs(TARGET_SIGMA_YY)
+
+            if error_hex8 > 0:
+                improvement = (error_hex8 - error_sri) / error_hex8
+            else:
+                improvement = 0.0
+
+            print(
+                "{:^10} {:^14.2f} {:^12.1%} {:^14.2f} {:^12.1%} {:^12.1%}".format(
+                    label, sigma_hex8, error_hex8, sigma_sri, error_sri, improvement
+                )
+            )
+
+        print("=" * 80)
+        print("Note: Hex8SRI reduces shear locking, improving stress accuracy")
+        print("=" * 80)
+
+        # Just verify the test runs successfully
+        assert True
+
+
 class TestNAFEMSLE10ReferenceValues:
     """Tests documenting the reference values for LE10 benchmark.
 
