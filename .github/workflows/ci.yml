@@ -107,7 +107,7 @@ jobs:
         working-directory: mops-python
         run: |
           pip install ../target/wheels/*.whl
-          pip install pytest pytest-cov numpy
+          pip install "mops[dev]"
 
       - name: Run unit tests
         working-directory: mops-python
@@ -155,7 +155,7 @@ jobs:
         working-directory: mops-python
         run: |
           pip install ../target/wheels/*.whl
-          pip install pytest numpy
+          pip install "mops[dev]"
 
       - name: Run verification tests
         working-directory: mops-python
