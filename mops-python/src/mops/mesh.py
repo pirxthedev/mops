@@ -94,6 +94,14 @@ ELEMENT_FACES = {
         (0, 4, 7, 3),  # Face 4: left (-x)
         (1, 2, 6, 5),  # Face 5: right (+x)
     ],
+    "hex8sri": [
+        (0, 3, 2, 1),  # Same as hex8
+        (4, 5, 6, 7),
+        (0, 1, 5, 4),
+        (2, 3, 7, 6),
+        (0, 4, 7, 3),
+        (1, 2, 6, 5),
+    ],
     "hex20": [
         (0, 3, 2, 1),  # Same corner topology as hex8
         (4, 5, 6, 7),
@@ -139,6 +147,7 @@ ELEMENT_FACE_ALL_NODES = {
     # Linear elements: same as ELEMENT_FACES
     "tet4": ELEMENT_FACES["tet4"],
     "hex8": ELEMENT_FACES["hex8"],
+    "hex8sri": ELEMENT_FACES["hex8sri"],
     "tri3": ELEMENT_FACES["tri3"],
     "quad4": ELEMENT_FACES["quad4"],
 
@@ -214,6 +223,11 @@ ELEMENT_EDGES = {
         (4, 5), (5, 6), (6, 7), (7, 4),  # top face
         (0, 4), (1, 5), (2, 6), (3, 7),  # vertical edges
     ],
+    "hex8sri": [
+        (0, 1), (1, 2), (2, 3), (3, 0),  # Same as hex8
+        (4, 5), (5, 6), (6, 7), (7, 4),
+        (0, 4), (1, 5), (2, 6), (3, 7),
+    ],
     "hex20": [
         (0, 1), (1, 2), (2, 3), (3, 0),  # bottom face (corner nodes only)
         (4, 5), (5, 6), (6, 7), (7, 4),  # top face
@@ -263,7 +277,7 @@ GMSH_ELEMENT_TYPES = {
 
 # Element types supported in mops-core
 SUPPORTED_ELEMENT_TYPES = frozenset([
-    "tet4", "tet10", "hex8", "hex20",
+    "tet4", "tet10", "hex8", "hex8sri", "hex20",
     "tri3", "tri6", "quad4", "quad8",
 ])
 

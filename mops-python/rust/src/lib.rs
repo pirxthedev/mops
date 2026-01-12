@@ -121,6 +121,7 @@ impl PyMesh {
             "tet4" => ElementType::Tet4,
             "tet10" => ElementType::Tet10,
             "hex8" => ElementType::Hex8,
+            "hex8sri" => ElementType::Hex8SRI,
             "hex20" => ElementType::Hex20,
             "tri3" => ElementType::Tri3,
             "tri6" => ElementType::Tri6,
@@ -128,7 +129,7 @@ impl PyMesh {
             "quad8" => ElementType::Quad8,
             _ => {
                 return Err(PyValueError::new_err(format!(
-                    "Unknown element type: {}. Valid types: tet4, tet10, hex8, hex20, tri3, tri6, quad4, quad8",
+                    "Unknown element type: {}. Valid types: tet4, tet10, hex8, hex8sri, hex20, tri3, tri6, quad4, quad8",
                     element_type
                 )))
             }
@@ -216,6 +217,7 @@ impl PyMesh {
             ElementType::Tet4 => "tet4".to_string(),
             ElementType::Tet10 => "tet10".to_string(),
             ElementType::Hex8 => "hex8".to_string(),
+            ElementType::Hex8SRI => "hex8sri".to_string(),
             ElementType::Hex20 => "hex20".to_string(),
             ElementType::Tri3 => "tri3".to_string(),
             ElementType::Tri6 => "tri6".to_string(),
@@ -1275,6 +1277,7 @@ fn element_stiffness<'py>(
         "tet4" => ElementType::Tet4,
         "tet10" => ElementType::Tet10,
         "hex8" => ElementType::Hex8,
+        "hex8sri" => ElementType::Hex8SRI,
         "hex20" => ElementType::Hex20,
         "tri3" => ElementType::Tri3,
         "tri6" => ElementType::Tri6,
@@ -1282,7 +1285,7 @@ fn element_stiffness<'py>(
         "quad8" => ElementType::Quad8,
         _ => {
             return Err(PyValueError::new_err(format!(
-                "Unknown element type: {}. Valid types: tet4, tet10, hex8, hex20, tri3, tri6, quad4, quad8",
+                "Unknown element type: {}. Valid types: tet4, tet10, hex8, hex8sri, hex20, tri3, tri6, quad4, quad8",
                 element_type
             )))
         }
@@ -1328,7 +1331,7 @@ fn element_stiffness<'py>(
 /// Compute element volume (or area for 2D elements) for a single element.
 ///
 /// Args:
-///     element_type: Element type string ("tet4", "tet10", "hex8", "hex20", "tri3", "tri6", "quad4", "quad8")
+///     element_type: Element type string ("tet4", "tet10", "hex8", "hex8sri", "hex20", "tri3", "tri6", "quad4", "quad8")
 ///     nodes: Nx3 array of node coordinates for this element
 ///
 /// Returns:
@@ -1339,6 +1342,7 @@ fn element_volume(element_type: &str, nodes: PyReadonlyArray2<f64>) -> PyResult<
         "tet4" => ElementType::Tet4,
         "tet10" => ElementType::Tet10,
         "hex8" => ElementType::Hex8,
+        "hex8sri" => ElementType::Hex8SRI,
         "hex20" => ElementType::Hex20,
         "tri3" => ElementType::Tri3,
         "tri6" => ElementType::Tri6,
@@ -1346,7 +1350,7 @@ fn element_volume(element_type: &str, nodes: PyReadonlyArray2<f64>) -> PyResult<
         "quad8" => ElementType::Quad8,
         _ => {
             return Err(PyValueError::new_err(format!(
-                "Unknown element type: {}. Valid types: tet4, tet10, hex8, hex20, tri3, tri6, quad4, quad8",
+                "Unknown element type: {}. Valid types: tet4, tet10, hex8, hex8sri, hex20, tri3, tri6, quad4, quad8",
                 element_type
             )))
         }
@@ -1385,7 +1389,7 @@ fn element_volume(element_type: &str, nodes: PyReadonlyArray2<f64>) -> PyResult<
 /// given its nodal coordinates, nodal displacements, and material properties.
 ///
 /// Args:
-///     element_type: Element type string ("tet4", "tet10", "hex8", "hex20", "tri3", "tri6", "quad4", "quad8")
+///     element_type: Element type string ("tet4", "tet10", "hex8", "hex8sri", "hex20", "tri3", "tri6", "quad4", "quad8")
 ///     nodes: Nx3 array of node coordinates for this element
 ///     displacements: Flat array of nodal displacements (N*dofs_per_node elements)
 ///     material: Material properties
@@ -1405,6 +1409,7 @@ fn compute_element_stress<'py>(
         "tet4" => ElementType::Tet4,
         "tet10" => ElementType::Tet10,
         "hex8" => ElementType::Hex8,
+        "hex8sri" => ElementType::Hex8SRI,
         "hex20" => ElementType::Hex20,
         "tri3" => ElementType::Tri3,
         "tri6" => ElementType::Tri6,
@@ -1412,7 +1417,7 @@ fn compute_element_stress<'py>(
         "quad8" => ElementType::Quad8,
         _ => {
             return Err(PyValueError::new_err(format!(
-                "Unknown element type: {}. Valid types: tet4, tet10, hex8, hex20, tri3, tri6, quad4, quad8",
+                "Unknown element type: {}. Valid types: tet4, tet10, hex8, hex8sri, hex20, tri3, tri6, quad4, quad8",
                 element_type
             )))
         }

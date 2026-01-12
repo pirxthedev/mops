@@ -23,6 +23,10 @@ pub enum ElementType {
     Tet10,
     /// 8-node hexahedron (linear).
     Hex8,
+    /// 8-node hexahedron with Selective Reduced Integration.
+    /// Uses 1-point volumetric and 2×2×2 deviatoric integration
+    /// to mitigate shear locking in bending.
+    Hex8SRI,
     /// 20-node hexahedron (quadratic).
     Hex20,
     /// 3-node triangle (plane stress/strain).
@@ -41,7 +45,7 @@ impl ElementType {
         match self {
             ElementType::Tet4 => 4,
             ElementType::Tet10 => 10,
-            ElementType::Hex8 => 8,
+            ElementType::Hex8 | ElementType::Hex8SRI => 8,
             ElementType::Hex20 => 20,
             ElementType::Tri3 => 3,
             ElementType::Tri6 => 6,
@@ -53,7 +57,11 @@ impl ElementType {
     /// Spatial dimension (2D or 3D).
     pub fn dimension(self) -> usize {
         match self {
-            ElementType::Tet4 | ElementType::Tet10 | ElementType::Hex8 | ElementType::Hex20 => 3,
+            ElementType::Tet4
+            | ElementType::Tet10
+            | ElementType::Hex8
+            | ElementType::Hex8SRI
+            | ElementType::Hex20 => 3,
             ElementType::Tri3 | ElementType::Tri6 | ElementType::Quad4 | ElementType::Quad8 => 2,
         }
     }
@@ -384,10 +392,18 @@ mod tests {
         assert_eq!(ElementType::Tet4.dofs_per_node(), 3);
         assert_eq!(ElementType::Tet10.dofs_per_node(), 3);
         assert_eq!(ElementType::Hex8.dofs_per_node(), 3);
+        assert_eq!(ElementType::Hex8SRI.dofs_per_node(), 3);
         assert_eq!(ElementType::Hex20.dofs_per_node(), 3);
         assert_eq!(ElementType::Tri3.dofs_per_node(), 2);
         assert_eq!(ElementType::Tri6.dofs_per_node(), 2);
         assert_eq!(ElementType::Quad4.dofs_per_node(), 2);
         assert_eq!(ElementType::Quad8.dofs_per_node(), 2);
+    }
+
+    #[test]
+    fn test_element_type_hex8_sri() {
+        assert_eq!(ElementType::Hex8SRI.n_nodes(), 8);
+        assert_eq!(ElementType::Hex8SRI.dimension(), 3);
+        assert_eq!(ElementType::Hex8SRI.dofs_per_node(), 3);
     }
 }

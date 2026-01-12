@@ -9,6 +9,7 @@
 //! - [`tet4`] - 4-node tetrahedron (constant strain)
 //! - [`tet10`] - 10-node tetrahedron (quadratic)
 //! - [`hex8`] - 8-node hexahedron (trilinear brick)
+//! - [`hex8_sri`] - 8-node hexahedron with selective reduced integration (shear locking mitigation)
 //! - [`hex20`] - 20-node hexahedron (serendipity quadratic brick)
 //! - [`plane_stress`] - 2D plane stress elements (Tri3, Quad4)
 //! - [`plane_strain`] - 2D plane strain elements (Tri3, Quad4)
@@ -42,6 +43,7 @@ pub mod axisymmetric;
 pub mod gauss;
 pub mod hex20;
 pub mod hex8;
+pub mod hex8_sri;
 pub mod plane_strain;
 pub mod plane_stress;
 pub mod quad8;
@@ -53,6 +55,7 @@ pub use axisymmetric::{Quad4Axisymmetric, Tri3Axisymmetric};
 pub use gauss::{gauss_1d, gauss_hex, gauss_quad, gauss_tet, gauss_tri, GaussPoint};
 pub use hex20::Hex20;
 pub use hex8::Hex8;
+pub use hex8_sri::Hex8SRI;
 pub use plane_strain::{Quad4PlaneStrain, Tri3PlaneStrain};
 pub use plane_stress::{Quad4, Tri3};
 pub use quad8::Quad8;
@@ -146,6 +149,7 @@ pub fn create_element(element_type: ElementType) -> Box<dyn Element> {
         ElementType::Tet4 => Box::new(Tet4::new()),
         ElementType::Tet10 => Box::new(Tet10::new()),
         ElementType::Hex8 => Box::new(Hex8::new()),
+        ElementType::Hex8SRI => Box::new(Hex8SRI::new()),
         ElementType::Hex20 => Box::new(Hex20::new()),
         ElementType::Tri3 | ElementType::Tri6 | ElementType::Quad4 | ElementType::Quad8 => {
             // Use default thickness of 1.0 for plane stress elements
@@ -237,6 +241,14 @@ mod tests {
         assert_eq!(element.n_nodes(), 20);
         assert_eq!(element.dofs_per_node(), 3);
         assert_eq!(element.n_dofs(), 60);
+    }
+
+    #[test]
+    fn test_create_element_hex8_sri() {
+        let element = create_element(ElementType::Hex8SRI);
+        assert_eq!(element.n_nodes(), 8);
+        assert_eq!(element.dofs_per_node(), 3);
+        assert_eq!(element.n_dofs(), 24);
     }
 
     #[test]
