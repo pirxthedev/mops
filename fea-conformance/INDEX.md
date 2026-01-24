@@ -22,7 +22,7 @@
 
 *Classic shell benchmark problems (Scordelis-Lo, Raasch hook, pinched cylinder)*
 
-<!-- Test cases to be added -->
+- [Scordelis-Lo Roof](tests/shell-classics/scordelis-lo-roof.md) - Cylindrical barrel vault under gravity, tests membrane-bending coupling
 
 ## Manufactured Solutions
 
