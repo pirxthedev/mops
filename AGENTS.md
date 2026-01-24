@@ -44,6 +44,15 @@ For any bugs you notice, create issues with `bd create` to be resolved in a futu
 
 ## Issue Tracking (bd/beads)
 
+### Prerequisites
+The `bd` CLI must be installed. Install from https://github.com/steveyegge/beads:
+```bash
+curl -fsSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/install.sh | bash
+```
+
+If network restrictions prevent installation, download the binary manually from GitHub releases.
+
+### Getting Started
 Run `bd onboard` to get started.
 
 ```bash
