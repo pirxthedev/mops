@@ -79,6 +79,8 @@ Standard integration variants (full, reduced, selective) where applicable.
 
 ### Sources
 
+See [2026-01-24-fea-conformance-test-index.md](2026-01-24-fea-conformance-test-index.md) for the complete test catalog.
+
 - NAFEMS benchmarks (R0011, R0015, R0016, etc.)
 - MacNeal-Harder element tests
 - Shell classics (Scordelis-Lo, Raasch hook, pinched cylinder)
